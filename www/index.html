@@ -10281,12 +10281,88 @@ window.bbCalGoTrips=function(){ tripsFilter='all'; renderTab('trips'); };
 
 /* ════ MAPA EN VIVO ════ */
 function renderMapTab(c){
-  c.innerHTML=`<div class="sec-header"><div class="sec-title">Mapa en vivo</div><div class="sec-actions"><button class="btn btn-outline btn-sm" onclick="bbDrawMap()">↻ Actualizar</button></div></div>
+  if(!window._bbMapDia) window._bbMapDia=bbTodayStr();
+  c.innerHTML=`<div class="sec-header"><div class="sec-title">Mapa en vivo</div><div class="sec-actions"><input type="date" id="bb-map-dia" data-libre value="${window._bbMapDia}" onchange="bbMapDia(this.value)" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:6px 8px;color:var(--text)"><button class="btn btn-outline btn-sm" onclick="bbMapDia(bbTodayStr())">Hoy</button><button class="btn btn-outline btn-sm" onclick="bbDrawMap();bbDrawServicios()">↻ Actualizar</button></div></div>
     <div id="bb-map"></div>
-    <div class="bb-map-legend"><span><span class="bb-map-dot" style="background:#22c55e"></span> Chófer con GPS</span><span><span class="bb-map-dot" style="background:#9a9590"></span> Conectado sin GPS</span><span><span class="bb-map-dot" style="background:#c9a84c"></span> Aeropuerto</span></div>
+    <div class="bb-map-legend"><span><span class="bb-map-dot" style="background:#22c55e"></span> Chófer con GPS</span><span><span class="bb-map-dot" style="background:#9a9590"></span> Conectado sin GPS</span><span><span class="bb-map-dot" style="background:#3b82f6"></span> Recogida</span><span><span class="bb-map-dot" style="background:#e05c5c"></span> Recogida sin chófer</span><span><span class="bb-map-dot" style="background:#c9a84c"></span> Aeropuerto</span></div>
+    <div id="bb-map-serv" style="margin-top:14px"></div>
     <div id="bb-map-side" style="margin-top:14px"></div>`;
-  bbLoadLeaflet().then(()=>{ bbInitMap(); bbDrawMap(); }).catch(()=>{ const m=$('bb-map'); if(m) m.innerHTML='<div style="padding:40px;text-align:center;color:var(--text2)">No se pudo cargar el mapa (revisa la conexión).</div>'; });
+  bbLoadLeaflet().then(()=>{ bbInitMap(); bbDrawMap(); bbDrawServicios(); }).catch(()=>{ const m=$('bb-map'); if(m) m.innerHTML='<div style="padding:40px;text-align:center;color:var(--text2)">No se pudo cargar el mapa (revisa la conexión).</div>'; });
 }
+window.bbMapDia=function(k){ window._bbMapDia=k||bbTodayStr(); const i=$('bb-map-dia'); if(i) i.value=window._bbMapDia; bbDrawServicios(); };
+
+/* ── Servicios del día en el mapa ──
+   Las direcciones son texto libre: se buscan en OpenStreetMap (Nominatim),
+   limitado a Ibiza y Formentera, de una en una (su norma: 1 por segundo) y
+   se guardan en este dispositivo para no repetir la búsqueda. Lo que no se
+   encuentra sale en la lista como «sin ubicar». */
+const FC_GEO_FIJOS = [
+  [/aeropuerto|airport|\bibz\b/i, [38.8729, 1.3731]],
+  [/estaci[oó]n mar[ií]tima|puerto de ibiza|port d.eivissa/i, [38.9105, 1.4430]],
+  [/la savina|formentera.*trasmapi|trasmapi.*formentera/i, [38.7340, 1.4170]],
+];
+let _fcGeoMem = null, _fcGeoCola = Promise.resolve();
+function fcGeoCache(){ if(_fcGeoMem) return _fcGeoMem; try{ _fcGeoMem=JSON.parse(localStorage.getItem('fc_geo')||'{}'); }catch(e){ _fcGeoMem={}; } return _fcGeoMem; }
+function fcGeoGuarda(){ try{ localStorage.setItem('fc_geo', JSON.stringify(_fcGeoMem)); }catch(e){} }
+function fcGeo(lugar){
+  const k=String(lugar||'').trim().toLowerCase(); if(!k) return Promise.resolve(null);
+  for(const [re,ll] of FC_GEO_FIJOS) if(re.test(k)) return Promise.resolve(ll);
+  const c=fcGeoCache(); if(k in c) return Promise.resolve(c[k]);
+  const busca = async q => {
+    const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=es&viewbox=1.15,39.15,1.65,38.62&bounded=1&q='+encodeURIComponent(q),{headers:{'Accept-Language':'es'}}).catch(()=>null);
+    const d = r&&r.ok ? await r.json().catch(()=>null) : null;
+    return d&&d[0] ? [parseFloat(d[0].lat), parseFloat(d[0].lon)] : null;
+  };
+  const p = _fcGeoCola.then(async()=>{
+    if(k in c) return c[k];
+    // «Hotel X · Santa Eulària» → se prueba entero y luego cada trozo.
+    const trozos=[lugar, ...String(lugar).split(/[·,\-–]/).map(s=>s.trim()).filter(s=>s.length>3)];
+    let ll=null;
+    for(const q of trozos){ ll=await busca(q); await new Promise(r=>setTimeout(r,1100)); if(ll) break; }
+    c[k]=ll; fcGeoGuarda(); return ll;
+  });
+  _fcGeoCola = p.catch(()=>null);
+  return p;
+}
+let bbServLayer=null, _bbServGen=0;
+async function bbDrawServicios(){
+  if(!bbMap||!window.L) return;
+  const gen=++_bbServGen;
+  if(bbServLayer){ try{bbMap.removeLayer(bbServLayer);}catch(e){} }
+  bbServLayer=L.layerGroup().addTo(bbMap);
+  const dia=window._bbMapDia||bbTodayStr();
+  const lista=bbCalTrips().filter(t=>(t.datetime||'').slice(0,10)===dia && !['cancelled'].includes(t.status))
+    .sort((a,b)=>(a.datetime||'').localeCompare(b.datetime||''));
+  const box=$('bb-map-serv');
+  const pinta=(estado)=>{ if(!box||gen!==_bbServGen) return;
+    box.innerHTML=`<div class="bb-panel"><div class="bb-panel-h"><div class="t">🗺️ Servicios del ${new Date(dia+'T12:00:00').toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long'})}</div><span class="badge">${lista.length}</span></div>`+
+      (lista.length? lista.map((t,i)=>{ const drv=t.driverUid&&allUsers[t.driverUid]?allUsers[t.driverUid].name:'Sin chófer'; const e=estado[t.id];
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:${e&&e.o?'pointer':'default'}" onclick="bbMapVer('${t.id}')"><span style="min-width:22px;height:22px;border-radius:50%;background:${t.driverUid?'#3b82f6':'#e05c5c'};color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">${i+1}</span><div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:var(--text)">${(t.datetime||'').slice(11,16)} · ${bbEsc(t.client||'—')} ${statusBadge(t.status)}</div><div style="font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${bbEsc(t.origin||'')} → ${bbEsc(t.destination||'')}</div><div style="font-size:11px;color:${t.driverUid?'var(--gold)':'var(--danger)'}">🚗 ${bbEsc(drv)}</div></div><span style="font-size:10px;color:var(--text3)">${e===undefined?'buscando…':e&&e.o?'':'sin ubicar'}</span></div>`; }).join('')
+      : '<div style="font-size:12px;color:var(--text2);padding:8px 0">No hay servicios este día.</div>')+`</div>`;
+  };
+  const estado={}; window._bbServEstado=estado; pinta(estado);
+  const puntos=[];
+  for(let i=0;i<lista.length;i++){
+    const t=lista[i];
+    let [o,d]=await Promise.all([fcGeo(t.origin),fcGeo(t.destination)]);
+    if(gen!==_bbServGen) return;
+    estado[t.id]={o,d};
+    // Varias recogidas en el mismo sitio (el aeropuerto): se abren en abanico para que se vean todas.
+    if(o){ const rep=puntos.filter(x=>x._rec&&x[0]===o[0]&&x[1]===o[1]).length; if(rep){ const a=rep*1.2; o=[o[0]+0.004*Math.sin(a), o[1]+0.004*Math.cos(a)]; } }
+    if(o){
+      const color=t.driverUid?'#3b82f6':'#e05c5c';
+      const drv=t.driverUid&&allUsers[t.driverUid]?allUsers[t.driverUid].name:'Sin chófer';
+      const icon=L.divIcon({className:'',html:`<div style="width:24px;height:24px;border-radius:50%;background:${color};border:2px solid #fff;color:#fff;font:700 11px sans-serif;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px #0008">${i+1}</div>`,iconSize:[24,24],iconAnchor:[12,12]});
+      const m=L.marker(o,{icon}).addTo(bbServLayer).bindPopup(`<b>${(t.datetime||'').slice(11,16)} · ${bbEsc(t.client||'—')}</b><br>${bbEsc(t.origin||'')} → ${bbEsc(t.destination||'')}<br>🚗 ${bbEsc(drv)}${t.pax?' · '+t.pax+' pax':''}`);
+      estado[t.id].m=m; const base=(estado[t.id].o||o); const pr=[base[0],base[1]]; pr._rec=1; puntos.push(pr);
+      if(d){ L.polyline([o,d],{color,weight:2,opacity:.6,dashArray:'6 6'}).addTo(bbServLayer); L.circleMarker(d,{radius:4,color,fillColor:color,fillOpacity:1,weight:1}).addTo(bbServLayer); puntos.push(d); }
+    }
+    pinta(estado);
+  }
+  if(puntos.length && gen===_bbServGen){ try{ bbMap.fitBounds(L.latLngBounds(puntos).pad(0.15),{maxZoom:13}); }catch(e){} }
+}
+window.bbDrawServicios=bbDrawServicios;
+window.bbMapVer=function(id){ const e=(window._bbServEstado||{})[id]; if(e&&e.m&&bbMap){ bbMap.setView(e.m.getLatLng(),14); e.m.openPopup(); $('bb-map')?.scrollIntoView({behavior:'smooth',block:'center'}); } };
 window.bbDrawMap = bbDrawMap;
 function bbInitMap(){
   const el=$('bb-map'); if(!el||!window.L) return;
