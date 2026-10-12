@@ -94,7 +94,7 @@ La app busca el código en dos sitios, por orden:
    Es el respaldo: se usa si el primero no responde o no está subido.
 
 Si hay que cambiar estas direcciones, están en `www/index.html`, constante
-`FC_REGISTROS` (y en el maestro `fleet-nuevo.html`); cambiarlas obliga a
+`FC_REGISTROS`; cambiarlas obliga a
 publicar una versión nueva de la app.
 
 No hay que compilar nada para añadir una empresa. En Hostinger, carpeta
@@ -120,26 +120,59 @@ desaparece el crédito de WolfTech de la entrada, del raíl y de Ajustes.
 
 ## 5 · Actualizar la app
 
-Cuando cambie `fleet-nuevo.html`:
+Desde el 12 de octubre de 2026 **el código de Fleet Control vive aquí**, en
+`www/index.html`. Ya no hay maestro `fleet-nuevo.html` fuera del repositorio:
+se edita este archivo y de él salen la app de las tiendas y la demo web.
 
-1. Desde esta carpeta: `node herramientas/construir-movil.mjs ../fleet-nuevo.html ../demo/index.html` (regenera
-   `www/index.html` con la configuración vacía, los logos neutros y sin
-   nada de ninguna empresa; aborta si encuentra restos).
-2. `git commit` + `git push`.
-3. Start new build en Codemagic.
+1. Cambia `www/index.html` y prueba la demo:
+   `node herramientas/construir-demo.mjs` → `salida/demo/index.html`
+   (le pone la empresa de muestra, sus imágenes y quita el puente nativo).
+2. `node herramientas/prueba-verifactu.mjs` si has tocado la facturación.
+3. `git commit` + `git push`; Start new build en Codemagic.
+4. La demo web: sube `salida/demo/index.html` a Hostinger,
+   `public_html/demo/`.
+
+Dos librerías van incrustadas en `www/index.html` entre marcas y no se
+editan ahí: `herramientas/verifactu.js` (FCVF) y `herramientas/qrcode.min.js`
+(QRG). `construir-demo.mjs` aborta si la copia de dentro no coincide.
+
+`herramientas/construir-movil.mjs` es la herramienta del flujo antiguo (a
+partir de `fleet-nuevo.html`); solo sirve ya para volver a copiar los
+plugins de `node_modules` a `www/lib/`.
 
 Cambios de nombre, icono o permisos: `capacitor.config.ts`,
 `assets/` (+ `npm run assets`), `android/app/src/main/AndroidManifest.xml`
-e `ios/App/App/Info.plist`.
+e `ios/App/App/Info.plist`. Un plugin nuevo de Capacitor: `npm i`, copiar su
+`dist/plugin.js` a `www/lib/`, añadir su `<script>` antes de `status-bar.js`
+y `npx cap sync`.
+
+
+## 5 bis · Facturación
+
+Facturas con numeración correlativa por serie y año (F/R), registro
+encadenado con huella SHA-256 según la especificación VERI*FACTU, factura
+simplificada hasta 3.000 €, rectificativas y anulaciones. Las emitidas no se
+editan ni se borran.
+
+**Falta el envío a la AEAT** (`FCF_VERIFACTU_ACTIVO = false`): necesita un
+servidor con el certificado electrónico de cada empresa. Hasta entonces el
+PDF no lleva el QR tributario ni la leyenda VERI*FACTU.
+
+Reglas de Firebase que blindan el registro (solo crear, nunca borrar):
+`herramientas/reglas-facturacion.json`. Hay que pegarlas en la consola de
+cada empresa; sin ellas la app funciona, pero alguien con acceso de oficina
+y conocimientos podría borrar registros desde fuera de la app.
 
 
 ## 6 · Lo que esta versión NO hace todavía
 
-- **Notificaciones nativas.** En la web funcionan las notificaciones del
-  navegador; dentro de la app de las tiendas no hay servicio de
-  notificaciones todavía (hace falta el plugin de push, un servidor que
-  las envíe y los archivos `google-services.json` / `GoogleService-Info.plist`
-  de cada proyecto). Los chóferes ven los cambios al abrir la app.
+- **Push desde servidor.** La app programa avisos en el propio móvil
+  (servicio en 60 y 15 min, servicio sin chófer, caducidades) y saca como
+  notificación lo que entra en la campana mientras está abierta. Lo que no
+  hace: avisar de un servicio recién asignado con la app cerrada desde hace
+  rato. Eso necesita un servidor central de WolfTech que mande push (una app
+  de tienda solo recibe push de un proyecto de Firebase, y aquí cada empresa
+  tiene el suyo).
 - **Ubicación en segundo plano.** La posición del chófer se envía mientras
   la app está abierta en pantalla. Con el móvil bloqueado no.
 - **Sin conexión.** La app necesita internet: la base de datos es Firebase.
