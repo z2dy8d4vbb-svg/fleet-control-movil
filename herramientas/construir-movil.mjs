@@ -141,6 +141,7 @@ const libs = [
   ['share/dist/plugin.js',             'share.js'],
   ['app/dist/plugin.js',               'app.js'],
   ['splash-screen/dist/plugin.js',     'splash-screen.js'],
+  ['local-notifications/dist/plugin.js', 'local-notifications.js'],
   ['status-bar/dist/plugin.js',        'status-bar.js']
 ];
 for (const [de, a] of libs) fs.copyFileSync(NM + de, WWW + '/lib/' + a);
@@ -156,6 +157,7 @@ const etiquetas = `
 <script src="lib/share.js"></script>
 <script src="lib/app.js"></script>
 <script src="lib/splash-screen.js"></script>
+<script src="lib/local-notifications.js"></script>
 <script src="lib/status-bar.js"></script>
 </head>`;
 if ((t.match(/<\/head>/g) || []).length !== 1) { console.error('ABORTA: </head>'); process.exit(1); }

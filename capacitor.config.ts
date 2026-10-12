@@ -30,6 +30,11 @@ const config: CapacitorConfig = {
       splashFullScreen: false,
       splashImmersive: false,
     },
+    // Avisos programados en el propio móvil (servicios próximos, caducidades).
+    LocalNotifications: {
+      smallIcon: 'ic_stat_aviso',
+      iconColor: '#22b8cf',
+    },
     StatusBar: {
       style: 'DARK',
       backgroundColor: '#0e1721',
