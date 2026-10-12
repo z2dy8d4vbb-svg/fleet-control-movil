@@ -24,7 +24,9 @@ workflows:
   android:
     name: Fleet Control · Android
     max_build_duration: 60
-    instance_type: linux_x2
+    # mac_mini_m2 y no linux: el plan gratuito de Codemagic (500 min/mes)
+    # solo incluye las máquinas Mac. Android compila igual en ellas.
+    instance_type: mac_mini_m2
     environment:
       android_signing:
         - fleet_control_keystore
