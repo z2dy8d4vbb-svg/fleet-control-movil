@@ -57,6 +57,8 @@ if (!t.includes(cfg.firebase.projectId)) aborta('no está el Firebase de la demo
 if (!t.includes('FCVF:INICIO')) aborta('falta el módulo de facturación (verifactu.js)');
 const vf = fs.readFileSync(path.join(RAIZ, 'herramientas/verifactu.js'), 'utf8');
 if (!t.includes(vf)) aborta('la copia de verifactu.js dentro de la app no es la del repositorio');
+const qrg = fs.readFileSync(path.join(RAIZ, 'herramientas/qrcode.min.js'), 'utf8').trimEnd();
+if (!t.includes(qrg)) aborta('la copia de qrcode.min.js dentro de la app no es la del repositorio');
 
 fs.mkdirSync(SALIDA, { recursive: true });
 fs.writeFileSync(path.join(SALIDA, 'index.html'), t);
