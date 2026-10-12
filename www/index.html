@@ -1867,7 +1867,7 @@ setTimeout(function () {
     </div>
     <div style="display:flex;gap:8px">
       <button class="btn btn-outline flex-1" onclick="closeModal(&#39;modal-invoice&#39;)">Cancelar</button>
-      <button class="btn btn-primary flex-1" style="justify-content:center" onclick="confirmGenerateInvoice()">⬇ Generar PDF</button>
+      <button class="btn btn-primary flex-1" style="justify-content:center" onclick="confirmGenerateInvoice()">🧾 Emitir factura</button>
     </div>
   </div>
 </div>
@@ -2052,6 +2052,197 @@ setTimeout(function () {
 <!-- TOAST -->
 <div id="toast"></div>
 
+<!-- FCVF:INICIO (herramientas/verifactu.js, no editar aquí) -->
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   Fleet Control · registro de facturación (Reglamento VERI*FACTU)
+   RD 1007/2023 y Orden HAC/1177/2024.
+
+   Este archivo es la ÚNICA copia de la lógica: construir-movil.mjs y
+   construir-demo.mjs lo meten tal cual en la app. Si lo cambias, pasa
+   antes las pruebas:  node herramientas/prueba-verifactu.mjs
+
+   Qué hace:
+   - Huella SHA-256 de cada registro de alta y de anulación, encadenada
+     con la del registro anterior, con el formato exacto de la AEAT
+     (campo=valor unidos por &, UTF-8, hexadecimal en MAYÚSCULAS).
+   - Fecha y hora del registro con el huso de España (Europe/Madrid).
+   - Importes siempre con punto y dos decimales.
+   - URL del QR tributario (sin uso todavía: ver FCF_VERIFACTU_ACTIVO).
+
+   La SHA-256 es síncrona a propósito: se calcula dentro de la
+   transacción de Firebase que reserva el número de factura, y esa
+   función no puede esperar a crypto.subtle.
+   ═══════════════════════════════════════════════════════════════════ */
+(function (raiz) {
+  'use strict';
+
+  const K = new Uint32Array([
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ]);
+
+  function utf8(s) {
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s);
+    return Uint8Array.from(Buffer.from(s, 'utf8'));
+  }
+
+  /** SHA-256 de un texto, en hexadecimal MAYÚSCULAS. */
+  function sha256Hex(texto) {
+    const m = utf8(texto);
+    const l = m.length;
+    const bloques = ((l + 9 + 63) >> 6);
+    const w8 = new Uint8Array(bloques * 64);
+    w8.set(m);
+    w8[l] = 0x80;
+    const bits = l * 8;
+    const dv = new DataView(w8.buffer);
+    dv.setUint32(w8.length - 8, Math.floor(bits / 0x100000000));
+    dv.setUint32(w8.length - 4, bits >>> 0);
+    const H = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
+    const W = new Uint32Array(64);
+    for (let b = 0; b < bloques; b++) {
+      for (let i = 0; i < 16; i++) W[i] = dv.getUint32(b * 64 + i * 4);
+      for (let i = 16; i < 64; i++) {
+        const x = W[i - 15], y = W[i - 2];
+        const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+        const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+        W[i] = (W[i - 16] + s0 + W[i - 7] + s1) >>> 0;
+      }
+      let a = H[0], bb = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+      for (let i = 0; i < 64; i++) {
+        const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+        const ch = (e & f) ^ (~e & g);
+        const t1 = (h + S1 + ch + K[i] + W[i]) >>> 0;
+        const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+        const maj = (a & bb) ^ (a & c) ^ (bb & c);
+        const t2 = (S0 + maj) >>> 0;
+        h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = bb; bb = a; a = (t1 + t2) >>> 0;
+      }
+      H[0] = (H[0] + a) >>> 0; H[1] = (H[1] + bb) >>> 0; H[2] = (H[2] + c) >>> 0; H[3] = (H[3] + d) >>> 0;
+      H[4] = (H[4] + e) >>> 0; H[5] = (H[5] + f) >>> 0; H[6] = (H[6] + g) >>> 0; H[7] = (H[7] + h) >>> 0;
+    }
+    let out = '';
+    for (let i = 0; i < 8; i++) out += H[i].toString(16).padStart(8, '0');
+    return out.toUpperCase();
+  }
+
+  /** 12.3 → "12.30". Redondeo comercial a céntimos. */
+  function importe(n) {
+    const v = Math.round((Number(n) || 0) * 100) / 100;
+    return (Object.is(v, -0) ? 0 : v).toFixed(2);
+  }
+
+  /** "2026-10-12" → "12-10-2026" (formato de la AEAT). */
+  function fechaAEAT(iso) {
+    const [y, m, d] = String(iso).slice(0, 10).split('-');
+    return d + '-' + m + '-' + y;
+  }
+
+  /** Fecha y hora de generación con el huso de España: 2026-10-12T09:31:05+02:00 */
+  function fechaHoraHuso(fecha) {
+    const f = fecha || new Date();
+    const partes = {};
+    for (const p of new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(f)) partes[p.type] = p.value;
+    const local = Date.UTC(+partes.year, +partes.month - 1, +partes.day, +partes.hour, +partes.minute, +partes.second);
+    const min = Math.round((local - Math.floor(f.getTime() / 1000) * 1000) / 60000);
+    const sg = min >= 0 ? '+' : '-';
+    const hh = String(Math.floor(Math.abs(min) / 60)).padStart(2, '0');
+    const mm = String(Math.abs(min) % 60).padStart(2, '0');
+    return `${partes.year}-${partes.month}-${partes.day}T${partes.hour}:${partes.minute}:${partes.second}${sg}${hh}:${mm}`;
+  }
+
+  const t = (v) => String(v == null ? '' : v).trim();
+
+  /** Texto exacto que se firma en un registro de ALTA. */
+  function cadenaAlta(r) {
+    return 'IDEmisorFactura=' + t(r.IDEmisorFactura) +
+      '&NumSerieFactura=' + t(r.NumSerieFactura) +
+      '&FechaExpedicionFactura=' + t(r.FechaExpedicionFactura) +
+      '&TipoFactura=' + t(r.TipoFactura) +
+      '&CuotaTotal=' + t(r.CuotaTotal) +
+      '&ImporteTotal=' + t(r.ImporteTotal) +
+      '&Huella=' + t(r.Huella) +
+      '&FechaHoraHusoGenRegistro=' + t(r.FechaHoraHusoGenRegistro);
+  }
+
+  /** Texto exacto que se firma en un registro de ANULACIÓN. */
+  function cadenaAnulacion(r) {
+    return 'IDEmisorFacturaAnulada=' + t(r.IDEmisorFacturaAnulada) +
+      '&NumSerieFacturaAnulada=' + t(r.NumSerieFacturaAnulada) +
+      '&FechaExpedicionFacturaAnulada=' + t(r.FechaExpedicionFacturaAnulada) +
+      '&Huella=' + t(r.Huella) +
+      '&FechaHoraHusoGenRegistro=' + t(r.FechaHoraHusoGenRegistro);
+  }
+
+  const huellaAlta = (r) => sha256Hex(cadenaAlta(r));
+  const huellaAnulacion = (r) => sha256Hex(cadenaAnulacion(r));
+
+  /** Comprueba una cadena de registros, en orden. Devuelve [] si está bien. */
+  function verificarCadena(registros) {
+    const errores = [];
+    let anterior = '';
+    registros.forEach((r, i) => {
+      if (t(r.Huella) !== anterior) errores.push(`Registro ${i + 1}: no enlaza con el anterior`);
+      const calc = r.TipoRegistro === 'anulacion' ? huellaAnulacion(r) : huellaAlta(r);
+      if (calc !== r.HuellaRegistro) errores.push(`Registro ${i + 1}: huella alterada`);
+      anterior = r.HuellaRegistro;
+    });
+    return errores;
+  }
+
+  /** URL del QR tributario. Producción o entorno de pruebas de la AEAT. */
+  function urlQR({ nif, numSerie, fecha, importeTotal, pruebas }) {
+    const host = pruebas
+      ? 'https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR'
+      : 'https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR';
+    const q = (s) => encodeURIComponent(String(s));
+    return `${host}?nif=${q(nif)}&numserie=${q(numSerie)}&fecha=${q(fecha)}&importe=${q(importeTotal)}`;
+  }
+
+  /** NIF, NIE o CIF español con formato y letra/dígito de control válidos. */
+  function nifValido(nif) {
+    const s = String(nif || '').toUpperCase().replace(/[\s-]/g, '');
+    const letras = 'TRWAGMYFPDXBNJZSQVHLCKE';
+    if (/^\d{8}[A-Z]$/.test(s)) return letras[+s.slice(0, 8) % 23] === s[8];
+    if (/^[XYZ]\d{7}[A-Z]$/.test(s)) {
+      const n = 'XYZ'.indexOf(s[0]) + s.slice(1, 8);
+      return letras[+n % 23] === s[8];
+    }
+    if (/^[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]$/.test(s)) {
+      let par = 0, impar = 0;
+      for (let i = 1; i <= 7; i++) {
+        const d = +s[i];
+        if (i % 2 === 0) par += d;
+        else { const x = d * 2; impar += Math.floor(x / 10) + (x % 10); }
+      }
+      const dc = (10 - ((par + impar) % 10)) % 10;
+      const ctl = s[8];
+      if ('PQRSNW'.includes(s[0])) return ctl === 'JABCDEFGHI'[dc];
+      if ('ABEH'.includes(s[0])) return ctl === String(dc);
+      return ctl === String(dc) || ctl === 'JABCDEFGHI'[dc];
+    }
+    return false;
+  }
+
+  const api = {
+    sha256Hex, importe, fechaAEAT, fechaHoraHuso, cadenaAlta, cadenaAnulacion,
+    huellaAlta, huellaAnulacion, verificarCadena, urlQR, nifValido,
+  };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else raiz.FCVF = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<!-- FCVF:FIN -->
 <script type="module">
 window.__fcModuloCargado = true;
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -3169,6 +3360,7 @@ function startApp() {
     `<span class="topbar-role">${roleLabel}</span>`;
   buildNav();
   setupRealtimeListeners();
+  if (currentUser.role === 'office') { fcfEscuchar(); fcfReparar(); }
   renderTab(currentUser.role==='office' ? 'dashboard' : 'trips');
   // Handle deep link: ?accept=TRIP_ID
   const urlParams = new URLSearchParams(window.location.search);
@@ -5137,7 +5329,7 @@ function renderSettings(c) {
       <div class="bb-export-row">
         <button class="btn btn-outline btn-sm" onclick="bbExportCSV('trips')">🚘 Viajes</button>
         <button class="btn btn-outline btn-sm" onclick="bbExportCSV('expenses')">⛽ Gastos</button>
-        <button class="btn btn-outline btn-sm" onclick="bbExportCSV('contabilidad')">🧾 Facturas</button>
+        <button class="btn btn-outline btn-sm" onclick="bbExportCSV('facturas')">🧾 Facturas</button> <button class="btn btn-outline btn-sm" onclick="bbExportCSV('contabilidad')">📋 Proformas y anteriores</button>
         <button class="btn btn-outline btn-sm" onclick="bbExportCSV('liquidaciones')">💸 Liquidaciones</button>
         <button class="btn btn-outline btn-sm" onclick="bbExportCSV('clients')">👤 Clientes</button>
       </div>
@@ -5798,256 +5990,476 @@ window.downloadBudgetPDF = async function() {
   fcGuardaPDF(doc, ('Presupuesto_'+E.nombreCorto+'_')+t.client+'_'+new Date().toLocaleDateString('es-ES')+'.pdf');
 };
 
-// ── INVOICE ───────────────────────────────────────────────────
-let _invoiceTripId = null;
-let _invoiceNum = 1;
+// ── FACTURACIÓN (registro VERI*FACTU) ─────────────────────────
+// Toda factura sale de fcfEmitir(): número correlativo por serie y año,
+// reservado en una transacción (dos personas facturando a la vez nunca
+// sacan el mismo número), y un registro de alta con su huella SHA-256
+// encadenada a la del registro anterior, como pide el Reglamento
+// VERI*FACTU (RD 1007/2023, Orden HAC/1177/2024).
+//
+// Una factura emitida no se edita ni se borra: se anula (registro de
+// anulación) o se corrige con una rectificativa. Lo único que se puede
+// cambiar después es si está cobrada.
+//
+// En la base de datos:
+//   contabilidad/_registro/estado          contadores por serie, última
+//                                          huella y el último registro
+//   contabilidad/_registro/registros/<n>   la cadena de registros, en orden
+//   contabilidad/_facturas/<F2026-0001>    la factura
+// Cuelga de «contabilidad» a propósito: las reglas de Firebase de cada
+// empresa ya dejan escribir ahí a la oficina, y así funciona sin tocar la
+// consola de cada cliente. Las reglas que la blindan (solo crear, nunca
+// borrar) están en herramientas/reglas-facturacion.json.
+//
+// Lo que NO hace todavía: enviar los registros a la AEAT. Para eso hace
+// falta un servidor con el certificado electrónico de cada empresa.
+// Mientras FCF_VERIFACTU_ACTIVO sea false, el PDF no lleva el QR
+// tributario ni la leyenda «VERI*FACTU»: ponerlos sin enviar a la AEAT
+// sería decir algo falso en un documento fiscal.
+const FCF_VERIFACTU_ACTIVO = false;
+// Factura simplificada sin NIF del cliente: hasta 3.000 € IVA incluido en
+// transporte de personas (art. 4.1 del Reglamento de facturación).
+const FCF_LIMITE_SIMPLIFICADA = 3000;
+const VF = window.FCVF;
 
-window.confirmGenerateInvoice = function() {
-  // Decide entre factura individual (de un viaje) o factura múltiple (varios viajes seleccionados)
-  if(_invoiceTripId) {
-    generateInvoicePDF();
-  } else {
-    generateMultiInvoicePDF();
-  }
-};
-
-window.openInvoice = function(tripId) {
-  _invoiceTripId = tripId;
-  const t = allTrips[tripId]; if(!t) return;
-  document.getElementById('inv-client-name').value = t.client||'';
-  document.getElementById('inv-client-nif').value = '';
-  document.getElementById('inv-client-addr').value = '';
-  // Auto invoice number
-  get(ref(db,'invoice_counter')).then(snap=>{
-    // Number() a propósito: si en la base de datos hay algo que no sea un
-    // número, sumarle 1 daba cosas como '[object Object]1' en el número de
-    // factura, y eso acababa impreso en un documento fiscal.
-    const n = (Number(snap.val()) || 0) + 1;
-    _invoiceNum = n;
-    document.getElementById('inv-number').value = new Date().getFullYear()+'-'+String(n).padStart(3,'0');
+let fcfFacturas = {};
+let _fcfEscucha = null;
+function fcfEscuchar() {
+  if (_fcfEscucha) return;
+  _fcfEscucha = onValue(ref(db, 'contabilidad/_facturas'), s => {
+    fcfFacturas = s.val() || {};
+    if (typeof currentTab !== 'undefined' && currentTab === 'contabilidad' && (contTab === 'facturas')) {
+      const l = document.getElementById('fcf-lista'); if (l) l.innerHTML = fcfListaHTML();
+    }
   });
-  openModal('modal-invoice');
+}
+
+function fcfHoyMadrid() {
+  const p = {};
+  for (const x of new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())) p[x.type] = x.value;
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+const fcfR2 = n => Math.round((Number(n) || 0) * 100) / 100;
+
+/** Desglose por tipo de IVA a partir de las líneas {concepto, cantidad, precio, iva}. */
+function fcfTotales(lineas) {
+  const porTipo = {};
+  for (const l of lineas) {
+    const base = fcfR2((Number(l.cantidad) || 1) * (Number(l.precio) || 0));
+    const k = String(Number(l.iva) || 0);
+    porTipo[k] = fcfR2((porTipo[k] || 0) + base);
+  }
+  const desglose = Object.entries(porTipo).map(([tipo, base]) => ({ tipo: Number(tipo), base, cuota: fcfR2(base * Number(tipo) / 100) }));
+  const base = fcfR2(desglose.reduce((s, d) => s + d.base, 0));
+  const cuota = fcfR2(desglose.reduce((s, d) => s + d.cuota, 0));
+  return { desglose, base, cuota, total: fcfR2(base + cuota) };
+}
+
+/** Comprueba los datos antes de emitir. Devuelve un texto de error o ''. */
+function fcfValida(f) {
+  if (!E.cif || !VF.nifValido(E.cif)) return 'Falta el NIF/CIF de la empresa, o no es válido. Sin él no se puede emitir una factura.';
+  if (!E.razonSocial) return 'Falta la razón social de la empresa.';
+  if (!f.cliente.nombre) return 'Falta el nombre del cliente.';
+  if (f.cliente.nif && !VF.nifValido(f.cliente.nif) && !f.cliente.extranjero) return 'El NIF del cliente no es válido. Si es extranjero, marca «Cliente extranjero».';
+  if (!f.lineas.length || !f.lineas.some(l => (Number(l.precio) || 0) !== 0)) return 'La factura no tiene importe.';
+  const tot = fcfTotales(f.lineas);
+  if (f.tipo === 'F2' && Math.abs(tot.total) > FCF_LIMITE_SIMPLIFICADA) return `Sin NIF del cliente solo se puede hacer factura simplificada hasta ${fmtEUR(FCF_LIMITE_SIMPLIFICADA)}. Pide su NIF.`;
+  return '';
+}
+
+/**
+ * Emite una factura. f = {cliente:{nombre,nif,direccion,email,extranjero},
+ * lineas:[{concepto,cantidad,precio,iva}], fechaOperacion, notas, tripIds,
+ * rectifica?:{id,numSerie,fecha,motivo}}
+ * Devuelve la factura guardada.
+ */
+async function fcfEmitir(f) {
+  if (!currentUser || currentUser.role !== 'office') throw new Error('Solo la oficina puede emitir facturas.');
+  const rectificativa = !!f.rectifica;
+  f.tipo = rectificativa ? 'R1' : (f.cliente.nif ? 'F1' : 'F2');
+  const err = fcfValida(f);
+  if (err) throw new Error(err);
+  const tot = fcfTotales(f.lineas);
+  const hoy = fcfHoyMadrid();
+  const anio = hoy.slice(0, 4);
+  const prefijo = rectificativa ? 'R' : 'F';
+
+  let resultado = null;
+  const tx = await runTransaction(ref(db, 'contabilidad/_registro/estado'), cur => {
+    cur = cur || {};
+    const series = cur.series || {};
+    const clave = prefijo + anio;
+    const n = (Number(series[clave]) || 0) + 1;
+    const numSerie = `${prefijo}${anio}-${String(n).padStart(4, '0')}`;
+    const seq = (Number(cur.seq) || 0) + 1;
+    const reg = {
+      TipoRegistro: 'alta',
+      IDEmisorFactura: E.cif.toUpperCase().replace(/[\s-]/g, ''),
+      NumSerieFactura: numSerie,
+      FechaExpedicionFactura: VF.fechaAEAT(hoy),
+      TipoFactura: f.tipo,
+      CuotaTotal: VF.importe(tot.cuota),
+      ImporteTotal: VF.importe(tot.total),
+      Huella: cur.ultimaHuella || '',
+      FechaHoraHusoGenRegistro: VF.fechaHoraHuso(),
+      seq,
+      facturaId: numSerie,
+    };
+    reg.HuellaRegistro = VF.huellaAlta(reg);
+    const factura = {
+      numSerie, serie: prefijo, numero: n, tipo: f.tipo,
+      fechaExpedicion: hoy, fechaOperacion: f.fechaOperacion || hoy,
+      emisor: { nif: reg.IDEmisorFactura, nombre: E.razonSocial, direccion: [E.calle, E.direccion, E.provincia].filter(Boolean).join(', ') },
+      cliente: {
+        nombre: f.cliente.nombre || '', nif: (f.cliente.nif || '').toUpperCase().replace(/[\s-]/g, ''),
+        direccion: f.cliente.direccion || '', email: f.cliente.email || '', extranjero: !!f.cliente.extranjero,
+      },
+      lineas: f.lineas.map(l => ({ concepto: l.concepto || '', cantidad: Number(l.cantidad) || 1, precio: fcfR2(l.precio), iva: Number(l.iva) || 0 })),
+      desglose: tot.desglose, base: tot.base, cuota: tot.cuota, total: tot.total,
+      notas: f.notas || '',
+      tripIds: f.tripIds || [],
+      estado: 'emitida',
+      cobro: { estado: 'pendiente' },
+      registro: { seq, huella: reg.HuellaRegistro, huellaAnterior: reg.Huella, fechaHoraHuso: reg.FechaHoraHusoGenRegistro },
+      creadaPor: currentUser.uid || '', creadaPorNombre: currentUser.name || '', creadaEn: new Date().toISOString(),
+    };
+    if (rectificativa) factura.rectifica = { id: f.rectifica.id, numSerie: f.rectifica.numSerie, fecha: f.rectifica.fecha, motivo: f.rectifica.motivo || '', tipo: 'I' };
+    series[clave] = n;
+    return { ...cur, series, seq, ultimaHuella: reg.HuellaRegistro, ultimo: reg, ultimaFactura: factura };
+  });
+  if (!tx.committed) throw new Error('No se pudo reservar el número de factura. Inténtalo de nuevo.');
+  const est = tx.snapshot.val();
+  resultado = est.ultimaFactura;
+  const upd = {};
+  upd[`contabilidad/_registro/registros/${String(est.ultimo.seq).padStart(8, '0')}`] = est.ultimo;
+  upd[`contabilidad/_facturas/${resultado.numSerie}`] = resultado;
+  for (const id of (resultado.tripIds || [])) upd[`trips/${id}/factura`] = resultado.numSerie;
+  if (rectificativa) upd[`contabilidad/_facturas/${f.rectifica.id}/rectificadaPor`] = resultado.numSerie;
+  await update(ref(db), upd);
+  fcfFacturas[resultado.numSerie] = resultado;
+  return resultado;
+}
+
+/** Anula una factura emitida por error. Deja un registro de anulación en la cadena. */
+async function fcfAnular(id, motivo) {
+  const fac = fcfFacturas[id];
+  if (!fac || fac.estado === 'anulada') return;
+  const tx = await runTransaction(ref(db, 'contabilidad/_registro/estado'), cur => {
+    cur = cur || {};
+    const seq = (Number(cur.seq) || 0) + 1;
+    const reg = {
+      TipoRegistro: 'anulacion',
+      IDEmisorFacturaAnulada: fac.emisor.nif,
+      NumSerieFacturaAnulada: fac.numSerie,
+      FechaExpedicionFacturaAnulada: VF.fechaAEAT(fac.fechaExpedicion),
+      Huella: cur.ultimaHuella || '',
+      FechaHoraHusoGenRegistro: VF.fechaHoraHuso(),
+      seq, facturaId: fac.numSerie, motivo: motivo || '',
+    };
+    reg.HuellaRegistro = VF.huellaAnulacion(reg);
+    return { ...cur, seq, ultimaHuella: reg.HuellaRegistro, ultimo: reg, ultimaFactura: null };
+  });
+  if (!tx.committed) throw new Error('No se pudo anular. Inténtalo de nuevo.');
+  const reg = tx.snapshot.val().ultimo;
+  const upd = {};
+  upd[`contabilidad/_registro/registros/${String(reg.seq).padStart(8, '0')}`] = reg;
+  upd[`contabilidad/_facturas/${id}/estado`] = 'anulada';
+  upd[`contabilidad/_facturas/${id}/anulacion`] = { motivo: motivo || '', fecha: new Date().toISOString(), por: currentUser.name || '', seq: reg.seq, huella: reg.HuellaRegistro };
+  for (const t of (fac.tripIds || [])) upd[`trips/${t}/factura`] = null;
+  await update(ref(db), upd);
+}
+
+/** Si una emisión se cortó entre reservar el número y guardar, la completa. */
+async function fcfReparar() {
+  try {
+    const s = await get(ref(db, 'contabilidad/_registro/estado'));
+    const est = s.val(); if (!est || !est.ultimo) return;
+    const clave = `contabilidad/_registro/registros/${String(est.ultimo.seq).padStart(8, '0')}`;
+    const r = await get(ref(db, clave));
+    if (r.exists()) return;
+    const upd = { [clave]: est.ultimo };
+    if (est.ultimo.TipoRegistro === 'alta' && est.ultimaFactura) {
+      upd[`contabilidad/_facturas/${est.ultimaFactura.numSerie}`] = est.ultimaFactura;
+      for (const id of (est.ultimaFactura.tripIds || [])) upd[`trips/${id}/factura`] = est.ultimaFactura.numSerie;
+    }
+    await update(ref(db), upd);
+  } catch (e) { console.warn('fcfReparar', e); }
+}
+
+/** Comprueba la cadena entera. */
+window.fcfVerificar = async function () {
+  const s = await get(ref(db, 'contabilidad/_registro/registros'));
+  const regs = Object.keys(s.val() || {}).sort().map(k => s.val()[k]);
+  const errores = VF.verificarCadena(regs);
+  const huecos = regs.filter((r, i) => r.seq !== i + 1).length;
+  if (huecos) errores.push('Faltan registros en la secuencia.');
+  if (!regs.length) { toast('Todavía no hay registros de facturación'); return; }
+  alert(errores.length
+    ? '⚠️ La cadena de registros NO es íntegra:\n\n' + errores.slice(0, 10).join('\n')
+    : `✅ Cadena íntegra: ${regs.length} registros, todos enlazados y sin alterar.\n\nÚltima huella:\n${regs[regs.length - 1].HuellaRegistro}`);
 };
 
-window.generateInvoicePDF = async function() {
-  const t = allTrips[_invoiceTripId]; if(!t) return;
-  const clientName = document.getElementById('inv-client-name').value.trim();
-  const clientNif  = document.getElementById('inv-client-nif').value.trim();
-  const clientAddr = document.getElementById('inv-client-addr').value.trim();
-  const invNum     = document.getElementById('inv-number').value.trim();
-  const ivaRate    = parseInt(document.getElementById('inv-iva').value);
-  if(!clientName) { toast('Introduce el nombre del cliente'); return; }
+/** Exporta los registros de facturación (para el gestor o una inspección). */
+window.fcfExportarRegistros = async function () {
+  const s = await get(ref(db, 'contabilidad/_registro/registros'));
+  const regs = Object.keys(s.val() || {}).sort().map(k => s.val()[k]);
+  if (!regs.length) { toast('No hay registros'); return; }
+  const cols = [['seq', 'Nº'], ['TipoRegistro', 'Registro'], ['NumSerieFactura', 'Factura'], ['NumSerieFacturaAnulada', 'Factura anulada'],
+    ['FechaExpedicionFactura', 'Fecha expedición'], ['TipoFactura', 'Tipo'], ['CuotaTotal', 'Cuota'], ['ImporteTotal', 'Total'],
+    ['FechaHoraHusoGenRegistro', 'Generado'], ['Huella', 'Huella anterior'], ['HuellaRegistro', 'Huella']];
+  bbDownload('registros_facturacion_' + bbTodayStr() + '.csv', '﻿' + bbToCSV(regs, cols), 'text/csv;charset=utf-8;');
+};
 
-  const base   = parseFloat(t.price)||0;
-  const iva    = Math.round(base * ivaRate/100 * 100)/100;
-  const total  = Math.round((base + iva)*100)/100;
-  const dt     = fmtDate(t.datetime);
+const fcfTipoTexto = t => t === 'F2' ? 'FACTURA SIMPLIFICADA' : t === 'R1' ? 'FACTURA RECTIFICATIVA' : 'FACTURA';
 
+/** PDF de una factura emitida (o borrador si no lleva numSerie). */
+async function fcfPDF(fac) {
   const jsPDF = await loadJsPDF();
-  const doc = new jsPDF({unit:'mm',format:'a4'});
-  const W=210, M=20;
-
-  // Header
-  doc.setFillColor(10,10,10);doc.rect(0,0,W,50,'F');
-  if (!fcLogoPDF(doc, LOGO_WHITE, (W-40)/2, 5, 40, 40)) {
-    doc.setTextColor(...FC_RGB_CLARO); doc.setFontSize(20); doc.setFont('helvetica','bold');
-    doc.text((E.nombreCorto||E.nombre).toUpperCase(), W/2, 20, {align:'center'});
-    doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(130,125,120);
-    doc.text((E.lema||'').toUpperCase(), W/2, 27, {align:'center'});
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const W = 210, M = 18;
+  const borrador = !fac.numSerie;
+  doc.setFillColor(10, 10, 10); doc.rect(0, 0, W, 44, 'F');
+  if (!fcLogoPDF(doc, LOGO_WHITE, M, 6, 32, 32)) {
+    doc.setTextColor(...FC_RGB_CLARO); doc.setFontSize(18); doc.setFont('helvetica', 'bold');
+    doc.text((E.nombreCorto || E.nombre || '').toUpperCase(), M, 22);
   }
-  doc.setDrawColor(...FC_RGB);doc.setLineWidth(0.3);doc.line(M,52,W-M,52);
+  doc.setTextColor(...FC_RGB_CLARO); doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
+  doc.text(borrador ? 'BORRADOR — NO VÁLIDO' : fcfTipoTexto(fac.tipo), W - M, 17, { align: 'right' });
+  doc.setFontSize(11); doc.text(borrador ? 'Sin número' : 'Nº ' + fac.numSerie, W - M, 25, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(200, 196, 190);
+  doc.text('Fecha de expedición: ' + new Date(fac.fechaExpedicion + 'T12:00:00').toLocaleDateString('es-ES'), W - M, 32, { align: 'right' });
+  if (fac.fechaOperacion && fac.fechaOperacion !== fac.fechaExpedicion)
+    doc.text('Fecha de la operación: ' + new Date(fac.fechaOperacion + 'T12:00:00').toLocaleDateString('es-ES'), W - M, 37, { align: 'right' });
 
-  // Invoice title
-  doc.setTextColor(...FC_RGB);doc.setFontSize(18);doc.setFont('helvetica','bold');
-  doc.text('FACTURA',W/2,62,{align:'center'});
-  doc.setTextColor(130,125,120);doc.setFontSize(9);doc.setFont('helvetica','normal');
-  doc.text('Nº '+invNum+' · '+new Date().toLocaleDateString('es-ES'),W/2,69,{align:'center'});
+  let y = 54;
+  doc.setTextColor(30, 30, 30);
+  const col = (titulo, lineas, x) => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...FC_RGB); doc.text(titulo, x, y);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 40, 40);
+    lineas.filter(Boolean).forEach((l, i) => doc.text(String(l), x, y + 6 + i * 5, { maxWidth: 84 }));
+  };
+  col('EMISOR', [fac.emisor.nombre, 'NIF: ' + fac.emisor.nif, fac.emisor.direccion, E.email], M);
+  col('CLIENTE', [fac.cliente.nombre, fac.cliente.nif ? (fac.cliente.extranjero ? 'Nº identificación: ' : 'NIF: ') + fac.cliente.nif : '', fac.cliente.direccion], W / 2 + 4);
+  y += 32;
 
-  // Two columns: issuer left, client right
-  let y = 82;
-  doc.setFillColor(16,16,16);doc.rect(M,y,W-M*2,32,'F');
-  // Issuer
-  doc.setTextColor(...FC_RGB_CLARO);doc.setFontSize(9);doc.setFont('helvetica','bold');
-  doc.text('EMISOR',M+4,y+7);
-  doc.setTextColor(214,210,205);doc.setFontSize(8);doc.setFont('helvetica','normal');
-  doc.text(E.razonSocial,M+4,y+13);
-  doc.text(('CIF: '+E.cif),M+4,y+19);
-  doc.text([E.calle, E.direccion].filter(Boolean).join(', '),M+4,y+25);
-  // Client
-  const cx = W/2+4;
-  doc.setTextColor(...FC_RGB_CLARO);doc.setFontSize(9);doc.setFont('helvetica','bold');
-  doc.text('CLIENTE',cx,y+7);
-  doc.setTextColor(214,210,205);doc.setFontSize(8);doc.setFont('helvetica','normal');
-  doc.text(clientName,cx,y+13);
-  if(clientNif) doc.text('NIF/CIF: '+clientNif,cx,y+19);
-  if(clientAddr) doc.text(clientAddr,cx,y+25);
-  y += 40;
-
-  // Service detail header
-  doc.setFillColor(30,28,24);doc.rect(M,y,W-M*2,8,'F');
-  doc.setTextColor(140,135,130);doc.setFontSize(7);doc.setFont('helvetica','normal');
-  doc.text('CONCEPTO',M+4,y+5.5);
-  doc.text('IMPORTE',W-M-4,y+5.5,{align:'right'});
-  y+=10;
-
-  // Service row
-  doc.setTextColor(55,57,62);doc.setFontSize(8);
-  const concept = 'Servicio de transporte - ' + dt + ' / ' + (t.origin||'—') + ' > ' + (t.destination||'—') + ' / ' + (t.vehicle||'—') + ' ' + (t.pax||1) + ' pasajeros';
-
-
-
-
-  doc.text(concept,M+4,y+5,{maxWidth:120});
-  doc.text(fmtEUR(base),W-M-4,y+5,{align:'right'});
-  y+=22;
-
-  // Totals
-  doc.setDrawColor(40,38,34);doc.setLineWidth(0.2);doc.line(W/2,y,W-M,y);
-  y+=5;
-  doc.setTextColor(130,125,120);doc.setFontSize(8);
-  doc.text('Base imponible',W/2+4,y); doc.text(fmtEUR(base),W-M-4,y,{align:'right'}); y+=7;
-  if(ivaRate>0){
-    doc.text('IVA '+ivaRate+'%',W/2+4,y); doc.text(fmtEUR(iva),W-M-4,y,{align:'right'}); y+=7;
+  if (fac.rectifica) {
+    doc.setFillColor(255, 244, 230); doc.rect(M, y - 5, W - 2 * M, 14, 'F');
+    doc.setFontSize(8.5); doc.setTextColor(120, 60, 0);
+    doc.text(`Rectifica la factura ${fac.rectifica.numSerie} del ${new Date(fac.rectifica.fecha + 'T12:00:00').toLocaleDateString('es-ES')} (rectificación por diferencias).`, M + 3, y);
+    if (fac.rectifica.motivo) doc.text('Motivo: ' + fac.rectifica.motivo, M + 3, y + 5, { maxWidth: W - 2 * M - 6 });
+    y += 16;
   }
-  doc.setDrawColor(...FC_RGB);doc.setLineWidth(0.3);doc.line(W/2,y,W-M,y);y+=6;
-  doc.setFillColor(20,18,14);doc.rect(W/2,y-2,W/2-M,12,'F');
-  doc.setTextColor(...FC_RGB_CLARO);doc.setFontSize(11);doc.setFont('helvetica','bold');
-  doc.text('TOTAL  '+fmtEUR(total),W-M-4,y+7,{align:'right'});
-  y+=20;
 
-  // Footer
-  doc.setDrawColor(50,48,44);doc.setLineWidth(0.2);doc.line(M,y,W-M,y);y+=6;
-  doc.setTextColor(80,78,74);doc.setFontSize(7);doc.setFont('helvetica','normal');
-  doc.text([E.razonSocial,'CIF '+E.cif,[E.calle,E.direccion].filter(Boolean).join(', '),E.email].filter(Boolean).join(' · '),W/2,y,{align:'center'});
+  doc.setFillColor(235, 233, 228); doc.rect(M, y - 5, W - 2 * M, 8, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(90, 90, 90);
+  doc.text('CONCEPTO', M + 2, y); doc.text('CANT.', 128, y, { align: 'right' }); doc.text('PRECIO', 150, y, { align: 'right' });
+  doc.text('IVA', 165, y, { align: 'right' }); doc.text('IMPORTE', W - M - 2, y, { align: 'right' });
+  y += 8; doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(40, 40, 40);
+  for (const l of fac.lineas) {
+    const txt = doc.splitTextToSize(l.concepto || '—', 100);
+    if (y + txt.length * 4.5 > 255) { doc.addPage(); y = 22; }
+    doc.text(txt, M + 2, y);
+    doc.text(String(l.cantidad), 128, y, { align: 'right' });
+    doc.text(fmtEUR(l.precio), 150, y, { align: 'right' });
+    doc.text(l.iva + '%', 165, y, { align: 'right' });
+    doc.text(fmtEUR(fcfR2(l.cantidad * l.precio)), W - M - 2, y, { align: 'right' });
+    y += txt.length * 4.5 + 2;
+    doc.setDrawColor(225, 225, 225); doc.setLineWidth(0.1); doc.line(M, y - 2, W - M, y - 2);
+  }
+  y += 4;
+  if (y > 230) { doc.addPage(); y = 22; }
+  doc.setFontSize(8.5); doc.setTextColor(70, 70, 70);
+  for (const d of fac.desglose) {
+    doc.text(`Base imponible al ${d.tipo}%`, 128, y); doc.text(fmtEUR(d.base), W - M - 2, y, { align: 'right' }); y += 5;
+    doc.text(d.tipo ? `IVA ${d.tipo}%` : 'IVA 0% (exento)', 128, y); doc.text(fmtEUR(d.cuota), W - M - 2, y, { align: 'right' }); y += 5;
+  }
+  doc.setDrawColor(...FC_RGB); doc.setLineWidth(0.4); doc.line(128, y, W - M, y); y += 7;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...FC_RGB);
+  doc.text('TOTAL', 128, y); doc.text(fmtEUR(fac.total), W - M - 2, y, { align: 'right' });
+  y += 10;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(90, 90, 90);
+  if (fac.notas) { doc.text(doc.splitTextToSize('Notas: ' + fac.notas, W - 2 * M), M, y); y += 8; }
+  if (fac.estado === 'anulada') {
+    doc.setTextColor(200, 40, 40); doc.setFontSize(28); doc.setFont('helvetica', 'bold');
+    doc.text('ANULADA', W / 2, 150, { align: 'center', angle: 20 });
+  }
+  if (FCF_VERIFACTU_ACTIVO && !borrador) {
+    // Pendiente de activar con el envío a la AEAT: QR tributario de 30-40 mm
+    // con «QR tributario:» encima y la leyenda «VERI*FACTU» debajo.
+  }
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(120, 120, 120);
+  doc.text([fac.emisor.nombre, 'NIF ' + fac.emisor.nif, fac.emisor.direccion].filter(Boolean).join(' · '), W / 2, 288, { align: 'center' });
+  fcGuardaPDF(doc, (borrador ? 'Borrador' : 'Factura_' + fac.numSerie) + '_' + (fac.cliente.nombre || '').replace(/[^\wÀ-ÿ ]+/g, '').slice(0, 30) + '.pdf');
+}
+window.fcfPDFde = id => { const f = fcfFacturas[id]; if (f) fcfPDF(f); };
 
-  // Save and update counter
-  await set(ref(db,'invoice_counter'),_invoiceNum);
-  fcGuardaPDF(doc, 'Factura_'+invNum+'_'+clientName+'.pdf');
-  closeModal('modal-invoice');
-  toast('✅ Factura '+invNum+' generada');
+// ── Factura desde servicios (botón 🧾 de un servicio, o varios seleccionados) ──
+let _invoiceTripId = null;
+let _multiInvoiceIds = [];
+
+function fcfPrepararModal(trips) {
+  const first = trips[0] || {};
+  $('inv-client-name').value = first.client || '';
+  $('inv-client-nif').value = '';
+  $('inv-client-addr').value = '';
+  $('inv-number').value = 'Se asigna al emitir';
+  $('inv-number').disabled = true;
+  openModal('modal-invoice');
+  // Si el cliente ya está en la agenda con su NIF y dirección, se rellenan.
+  const nombre = (first.client || '').trim().toLowerCase();
+  if (nombre) get(ref(db, 'clients')).then(s => {
+    const c = Object.values(s.val() || {}).find(x => (x.name || '').trim().toLowerCase() === nombre);
+    if (!c) return;
+    if (!$('inv-client-nif').value) $('inv-client-nif').value = c.nif || '';
+    if (!$('inv-client-addr').value) $('inv-client-addr').value = c.address || '';
+  }).catch(() => {});
+}
+
+window.confirmGenerateInvoice = async function () {
+  const ids = _invoiceTripId ? [_invoiceTripId] : _multiInvoiceIds;
+  const trips = ids.map(id => ({ id, ...allTrips[id] })).filter(t => t && t.datetime);
+  if (!trips.length) return;
+  const ya = trips.filter(t => t.factura);
+  if (ya.length) { toast(`⚠️ ${ya.length === 1 ? 'Ese servicio ya está' : ya.length + ' servicios ya están'} en la factura ${ya[0].factura}`); return; }
+  trips.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+  const iva = parseInt($('inv-iva').value) || 0;
+  const f = {
+    cliente: { nombre: $('inv-client-name').value.trim(), nif: $('inv-client-nif').value.trim(), direccion: $('inv-client-addr').value.trim() },
+    lineas: trips.map(t => ({
+      concepto: 'Servicio de transporte · ' + fmtDate(t.datetime) + ' · ' + (t.origin || '—') + ' → ' + (t.destination || '—') + (t.pax ? ' · ' + t.pax + ' pax' : ''),
+      cantidad: 1, precio: fcfR2((parseFloat(t.price) || 0) + (Number(t.waitCharge) || 0)), iva,
+    })),
+    fechaOperacion: trips[trips.length - 1].datetime.slice(0, 10),
+    tripIds: trips.map(t => t.id),
+  };
+  try {
+    const fac = await fcfEmitir(f);
+    closeModal('modal-invoice');
+    toast('✅ Factura ' + fac.numSerie + ' emitida');
+    await fcfPDF(fac);
+  } catch (e) { toast('⚠️ ' + (e.message || e), 6000); }
 };
 
-// ── FACTURA AGRUPADA (varios servicios seleccionados) ─────────
-window.updateInvoiceBar = function() {
+window.openInvoice = function (tripId) {
+  _invoiceTripId = tripId; _multiInvoiceIds = [];
+  const t = allTrips[tripId]; if (!t) return;
+  fcfPrepararModal([t]);
+};
+
+window.updateInvoiceBar = function () {
   const checks = document.querySelectorAll('.inv-check:checked');
   const bar = document.getElementById('invoice-bar');
   const count = document.getElementById('invoice-count');
-  if(bar) bar.style.display = checks.length>0 ? 'flex' : 'none';
-  if(count) count.textContent = checks.length + (checks.length===1?' seleccionado':' seleccionados');
+  if (bar) bar.style.display = checks.length > 0 ? 'flex' : 'none';
+  if (count) count.textContent = checks.length + (checks.length === 1 ? ' seleccionado' : ' seleccionados');
 };
 
-let _multiInvoiceIds = [];
-window.invoiceSelected = function() {
-  const ids = [...document.querySelectorAll('.inv-check:checked')].map(c=>c.dataset.id);
-  if(!ids.length) { toast('Selecciona al menos un servicio'); return; }
-  // Comprobar que todos son del mismo cliente
-  const names = [...new Set(ids.map(id=>(allTrips[id]?.client||'').trim().toLowerCase()))];
-  _multiInvoiceIds = ids;
-  const first = allTrips[ids[0]];
-  document.getElementById('inv-client-name').value = first?.client||'';
-  document.getElementById('inv-client-nif').value = '';
-  document.getElementById('inv-client-addr').value = '';
-  get(ref(db,'invoice_counter')).then(snap=>{
-    const n = (Number(snap.val()) || 0) + 1; _invoiceNum = n;
-    document.getElementById('inv-number').value = new Date().getFullYear()+'-'+String(n).padStart(3,'0');
-  });
-  if(names.length>1) toast('⚠️ Has seleccionado servicios de clientes distintos');
-  _invoiceTripId = null; // marca modo multi
-  openModal('modal-invoice');
+window.invoiceSelected = function () {
+  const ids = [...document.querySelectorAll('.inv-check:checked')].map(c => c.dataset.id);
+  if (!ids.length) { toast('Selecciona al menos un servicio'); return; }
+  const names = [...new Set(ids.map(id => (allTrips[id]?.client || '').trim().toLowerCase()))];
+  _multiInvoiceIds = ids; _invoiceTripId = null;
+  fcfPrepararModal(ids.map(id => allTrips[id]));
+  if (names.length > 1) toast('⚠️ Has seleccionado servicios de clientes distintos');
 };
 
-window.generateMultiInvoicePDF = async function() {
-  const ids = _multiInvoiceIds;
-  const trips = ids.map(id=>({id, ...allTrips[id]})).filter(t=>t.client);
-  if(!trips.length) return;
-  const clientName = document.getElementById('inv-client-name').value.trim();
-  const clientNif  = document.getElementById('inv-client-nif').value.trim();
-  const clientAddr = document.getElementById('inv-client-addr').value.trim();
-  const invNum     = document.getElementById('inv-number').value.trim();
-  const ivaRate    = parseInt(document.getElementById('inv-iva').value);
-  if(!clientName) { toast('Introduce el nombre del cliente'); return; }
+// ── Lista de facturas en Contabilidad ──
+function fcfListaHTML() {
+  const lista = Object.values(fcfFacturas).sort((a, b) => (b.registro?.seq || 0) - (a.registro?.seq || 0));
+  if (!lista.length) return '<div style="color:var(--text2);font-size:12px;padding:8px 0">Todavía no hay facturas emitidas.</div>';
+  // Una rectificativa deja su original a cero: ni la pareja ni la R1 cuentan como pendientes.
+  const pend = lista.filter(f => f.estado !== 'anulada' && f.tipo !== 'R1' && !f.rectificadaPor && f.cobro?.estado !== 'cobrada').reduce((s, f) => s + (f.total || 0), 0);
+  return `<div style="font-size:12px;color:var(--text2);margin-bottom:8px">Pendiente de cobro: <b style="color:var(--gold)">${fmtEUR(pend)}</b></div>` +
+    lista.map(f => {
+      const anulada = f.estado === 'anulada';
+      const cobrada = f.cobro?.estado === 'cobrada';
+      const badge = anulada ? '<span style="color:#e05c5c">ANULADA</span>'
+        : f.tipo === 'R1' ? '<span style="color:var(--text2)">Abono de ' + (f.rectifica?.numSerie || '') + '</span>'
+        : f.rectificadaPor ? '<span style="color:var(--text2)">Rectificada por ' + f.rectificadaPor + '</span>'
+        : cobrada ? '<span style="color:#22c55e">Cobrada</span>' : '<span style="color:#f59e0b">Pendiente</span>';
+      return `<div class="cont-doc-card"${anulada ? ' style="opacity:.6"' : ''}>
+        <div class="cont-doc-info">
+          <div class="cont-doc-num">${f.numSerie} · ${f.tipo === 'F2' ? 'Simplificada' : f.tipo === 'R1' ? 'Rectificativa' : 'Completa'}</div>
+          <div class="cont-doc-client">${(f.cliente?.nombre || '—').replace(/</g, '&lt;')}</div>
+          <div class="cont-doc-meta">${new Date(f.fechaExpedicion + 'T12:00:00').toLocaleDateString('es-ES')} · ${fmtEUR(f.total)} · ${badge}</div>
+        </div>
+        <div class="cont-doc-actions">
+          <button class="btn btn-outline btn-sm" onclick="fcfPDFde('${f.numSerie}')">⬇ PDF</button>
+          ${!anulada && f.tipo !== 'R1' && !f.rectificadaPor ? `
+          <button class="btn btn-outline btn-sm" onclick="fcfCobro('${f.numSerie}')">${cobrada ? '↩ Pendiente' : '✓ Cobrada'}</button>
+          <button class="btn btn-outline btn-sm" onclick="fcfRectificar('${f.numSerie}')" title="Factura rectificativa (abono)">↺ Rectificar</button>
+          <button class="btn btn-outline btn-sm" onclick="fcfPedirAnular('${f.numSerie}')" style="color:#e05c5c" title="Solo para facturas emitidas por error">Anular</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+}
 
-  trips.sort((a,b)=>new Date(a.datetime)-new Date(b.datetime));
-  const base = trips.reduce((s,t)=>s+(parseFloat(t.price)||0)+(t.waitCharge||0),0);
-  const iva = Math.round(base*ivaRate/100*100)/100;
-  const total = Math.round((base+iva)*100)/100;
-
-  const jsPDF = await loadJsPDF();
-  const doc = new jsPDF({unit:'mm',format:'a4'});
-  const W=210, M=20;
-  doc.setFillColor(10,10,10);doc.rect(0,0,W,50,'F');
-  if (!fcLogoPDF(doc, LOGO_WHITE, (W-40)/2, 5, 40, 40)) {
-    doc.setTextColor(...FC_RGB_CLARO); doc.setFontSize(20); doc.setFont('helvetica','bold');
-    doc.text((E.nombreCorto||E.nombre).toUpperCase(), W/2, 20, {align:'center'});
-    doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(130,125,120);
-    doc.text((E.lema||'').toUpperCase(), W/2, 27, {align:'center'});
-  }
-  doc.setDrawColor(...FC_RGB);doc.setLineWidth(0.3);doc.line(M,52,W-M,52);
-  doc.setTextColor(...FC_RGB);doc.setFontSize(18);doc.setFont('helvetica','bold');
-  doc.text('FACTURA',W/2,62,{align:'center'});
-  doc.setTextColor(130,125,120);doc.setFontSize(9);doc.setFont('helvetica','normal');
-  const dates = trips.map(t=>new Date(t.datetime));
-  const minD = new Date(Math.min(...dates)), maxD = new Date(Math.max(...dates));
-  const range = minD.toLocaleDateString('es-ES')+' – '+maxD.toLocaleDateString('es-ES');
-  doc.text('Nº '+invNum+' · '+new Date().toLocaleDateString('es-ES')+' · '+trips.length+' servicios',W/2,69,{align:'center'});
-
-  let y=82;
-  doc.setFillColor(16,16,16);doc.rect(M,y,W-M*2,32,'F');
-  doc.setTextColor(...FC_RGB_CLARO);doc.setFontSize(9);doc.setFont('helvetica','bold');
-  doc.text('EMISOR',M+4,y+7);
-  doc.setTextColor(214,210,205);doc.setFontSize(8);doc.setFont('helvetica','normal');
-  doc.text(E.razonSocial,M+4,y+13);
-  doc.text(('CIF: '+E.cif),M+4,y+19);
-  doc.text([E.calle, E.direccion].filter(Boolean).join(', '),M+4,y+25);
-  const cx=W/2+4;
-  doc.setTextColor(...FC_RGB_CLARO);doc.setFontSize(9);doc.setFont('helvetica','bold');
-  doc.text('CLIENTE',cx,y+7);
-  doc.setTextColor(214,210,205);doc.setFontSize(8);doc.setFont('helvetica','normal');
-  doc.text(clientName,cx,y+13);
-  if(clientNif) doc.text('NIF/CIF: '+clientNif,cx,y+19);
-  if(clientAddr) doc.text(clientAddr,cx,y+25);
-  y+=40;
-  doc.setTextColor(130,125,120);doc.setFontSize(8);
-  doc.text('Periodo facturado: '+range,M,y); y+=8;
-
-  // Tabla de servicios
-  doc.setFillColor(30,28,24);doc.rect(M,y,W-M*2,8,'F');
-  doc.setTextColor(140,135,130);doc.setFontSize(7);
-  doc.text('FECHA',M+4,y+5.5);
-  doc.text('TRAYECTO',M+34,y+5.5);
-  doc.text('IMPORTE',W-M-4,y+5.5,{align:'right'});
-  y+=10;
-  doc.setTextColor(55,57,62);doc.setFontSize(7.5);
-  trips.forEach(t=>{
-    if(y>262){ doc.addPage(); y=20; }
-    const d = new Date(t.datetime).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-    const trayecto = (t.origin||'—')+' > '+(t.destination||'—');
-    const imp = (parseFloat(t.price)||0)+(t.waitCharge||0);
-    doc.text(d,M+4,y);
-    doc.text(trayecto.length>52?trayecto.slice(0,50)+'…':trayecto,M+34,y);
-    doc.text(fmtEUR(imp),W-M-4,y,{align:'right'});
-    doc.setDrawColor(35,33,29);doc.setLineWidth(0.15);doc.line(M+4,y+2,W-M-4,y+2);
-    y+=7;
-  });
-  y+=4;
-  doc.setDrawColor(40,38,34);doc.setLineWidth(0.2);doc.line(W/2,y,W-M,y);y+=5;
-  doc.setTextColor(130,125,120);doc.setFontSize(8);
-  doc.text('Base imponible',W/2+4,y); doc.text(fmtEUR(base),W-M-4,y,{align:'right'}); y+=7;
-  if(ivaRate>0){ doc.text('IVA '+ivaRate+'%',W/2+4,y); doc.text(fmtEUR(iva),W-M-4,y,{align:'right'}); y+=7; }
-  doc.setDrawColor(...FC_RGB);doc.setLineWidth(0.3);doc.line(W/2,y,W-M,y);y+=6;
-  doc.setFillColor(20,18,14);doc.rect(W/2,y-2,W/2-M,12,'F');
-  doc.setTextColor(...FC_RGB_CLARO);doc.setFontSize(11);doc.setFont('helvetica','bold');
-  doc.text('TOTAL  '+fmtEUR(total),W-M-4,y+7,{align:'right'});
-  y+=20;
-  doc.setDrawColor(50,48,44);doc.setLineWidth(0.2);doc.line(M,y,W-M,y);y+=6;
-  doc.setTextColor(80,78,74);doc.setFontSize(7);doc.setFont('helvetica','normal');
-  doc.text([E.razonSocial,'CIF '+E.cif,[E.calle,E.direccion].filter(Boolean).join(', '),E.email].filter(Boolean).join(' · '),W/2,y,{align:'center'});
-
-  await set(ref(db,'invoice_counter'),_invoiceNum);
-  fcGuardaPDF(doc, 'Factura_'+invNum+'_'+clientName+'.pdf');
-  closeModal('modal-invoice');
-  toast('✅ Factura '+invNum+' generada con '+trips.length+' servicios');
+window.fcfCobro = async function (id) {
+  const f = fcfFacturas[id]; if (!f) return;
+  const cobrada = f.cobro?.estado === 'cobrada';
+  await set(ref(db, `contabilidad/_facturas/${id}/cobro`), cobrada ? { estado: 'pendiente' } : { estado: 'cobrada', fecha: new Date().toISOString(), por: currentUser.name || '' });
+  toast(cobrada ? 'Marcada como pendiente' : '✅ Marcada como cobrada');
 };
+
+window.fcfPedirAnular = async function (id) {
+  const f = fcfFacturas[id]; if (!f) return;
+  const motivo = prompt(`Anular la factura ${id}.\n\nSolo si se emitió por error (datos equivocados, duplicada...). Si el cliente ya la tiene y hay que corregir un importe, usa «Rectificar».\n\nMotivo:`);
+  if (motivo === null) return;
+  if (!motivo.trim()) { toast('Hace falta un motivo'); return; }
+  try { await fcfAnular(id, motivo.trim()); toast('Factura ' + id + ' anulada'); }
+  catch (e) { toast('⚠️ ' + (e.message || e), 6000); }
+};
+
+window.fcfRectificar = async function (id) {
+  const f = fcfFacturas[id]; if (!f) return;
+  const motivo = prompt(`Factura rectificativa de ${id} por ${fmtEUR(f.total)}.\n\nSe emite una factura en negativo que la deja a cero. Después, si hace falta, emites la buena.\n\nMotivo de la rectificación:`);
+  if (motivo === null) return;
+  if (!motivo.trim()) { toast('Hace falta un motivo'); return; }
+  try {
+    const r = await fcfEmitir({
+      cliente: { ...f.cliente },
+      lineas: f.lineas.map(l => ({ ...l, precio: -l.precio })),
+      fechaOperacion: f.fechaOperacion,
+      rectifica: { id, numSerie: f.numSerie, fecha: f.fechaExpedicion, motivo: motivo.trim() },
+      tripIds: [],
+    });
+    toast('✅ Rectificativa ' + r.numSerie + ' emitida');
+    await fcfPDF(r);
+  } catch (e) { toast('⚠️ ' + (e.message || e), 6000); }
+};
+
+/** Emitir desde el formulario de Contabilidad. */
+window.fcfEmitirFormulario = async function () {
+  const f = fcfLeerFormulario();
+  if (!f.lineas.length) { toast('Añade al menos una línea'); return; }
+  const tipo = f.cliente.nif ? 'factura completa' : 'factura simplificada (sin NIF del cliente)';
+  if (!confirm(`¿Emitir ${tipo} a ${f.cliente.nombre || '—'} por ${fmtEUR(fcfTotales(f.lineas).total)}?\n\nUna vez emitida no se puede editar ni borrar: solo anular o rectificar.`)) return;
+  try {
+    const fac = await fcfEmitir(f);
+    toast('✅ Factura ' + fac.numSerie + ' emitida');
+    clearContForm();
+    await fcfPDF(fac);
+  } catch (e) { toast('⚠️ ' + (e.message || e), 6000); }
+};
+
+window.fcfBorradorFormulario = async function () {
+  const f = fcfLeerFormulario();
+  const tot = fcfTotales(f.lineas);
+  await fcfPDF({ ...f, ...tot, tipo: f.cliente.nif ? 'F1' : 'F2', fechaExpedicion: fcfHoyMadrid(), fechaOperacion: f.fechaOperacion,
+    emisor: { nif: E.cif, nombre: E.razonSocial, direccion: [E.calle, E.direccion, E.provincia].filter(Boolean).join(', ') } });
+};
+
+function fcfLeerFormulario() {
+  const iva = parseFloat($('cf-iva')?.value ?? '10');
+  return {
+    cliente: { nombre: ($('cf-client')?.value || '').trim(), nif: ($('cf-nif')?.value || '').trim(), direccion: ($('cf-address')?.value || '').trim(),
+      email: ($('cf-email')?.value || '').trim(), extranjero: !!$('cf-extranjero')?.checked },
+    lineas: contLines.filter(l => (l.desc || '').trim() || l.price).map(l => ({ concepto: l.desc || '', cantidad: l.qty || 1, precio: l.price || 0, iva })),
+    fechaOperacion: $('cf-date')?.value || fcfHoyMadrid(),
+    notas: ($('cf-notes')?.value || '').trim(),
+  };
+}
 
 // ── STATISTICS / KPIs ─────────────────────────────────────────
 function renderStats(c) {
@@ -7865,12 +8277,15 @@ function renderContView(c) {
       <div class="cont-form">
         <div class="cont-form-title">${isProforma?'📋':'🧾'} Nueva ${docType}</div>
         <div class="cont-grid">
-          <div class="cont-field">
+          ${isProforma ? `<div class="cont-field">
             <label class="cont-lbl">Nº ${docType}</label>
-            <input class="cont-inp" id="cf-num" type="text" placeholder="Ej: F2026-001">
-          </div>
+            <input class="cont-inp" id="cf-num" type="text" placeholder="Ej: PF2026-001">
+          </div>` : `<div class="cont-field">
+            <label class="cont-lbl">Nº Factura</label>
+            <input class="cont-inp" type="text" value="Se asigna al emitir" disabled>
+          </div>`}
           <div class="cont-field">
-            <label class="cont-lbl">Fecha</label>
+            <label class="cont-lbl">${isProforma ? 'Fecha' : 'Fecha del servicio'}</label>
             <input class="cont-inp" id="cf-date" type="date" value="${new Date().toISOString().slice(0,10)}">
           </div>
           <div class="cont-field full">
@@ -7881,7 +8296,8 @@ function renderContView(c) {
           </div>
           <div class="cont-field">
             <label class="cont-lbl">NIF / Pasaporte</label>
-            <input class="cont-inp" id="cf-nif" type="text" placeholder="Opcional">
+            <input class="cont-inp" id="cf-nif" type="text" placeholder="${isProforma ? 'Opcional' : 'Sin NIF: factura simplificada'}">
+            ${isProforma ? '' : `<label style="font-size:11px;color:var(--text2);display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="cf-extranjero"> Cliente extranjero (pasaporte o NIF de otro país)</label>`}
           </div>
           <div class="cont-field">
             <label class="cont-lbl">Email</label>
@@ -7921,15 +8337,28 @@ function renderContView(c) {
         </div>
 
         <div class="cont-actions">
+          ${isProforma ? `
           <button class="btn btn-primary btn-sm" onclick="saveContDoc('${contTab}')">💾 Guardar</button>
-          <button class="btn btn-outline btn-sm" onclick="downloadContPDF('${contTab}')">⬇ PDF</button>
+          <button class="btn btn-outline btn-sm" onclick="downloadContPDF('${contTab}')">⬇ PDF</button>` : `
+          <button class="btn btn-primary btn-sm" onclick="fcfEmitirFormulario()">🧾 Emitir factura</button>
+          <button class="btn btn-outline btn-sm" onclick="fcfBorradorFormulario()">👁 Ver borrador</button>`}
           <button class="btn btn-outline btn-sm" onclick="clearContForm()">🗑 Limpiar</button>
         </div>
       </div>
+      ${isProforma ? '' : `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;flex-wrap:wrap">
+        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2)">Facturas emitidas</div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-outline btn-sm" onclick="fcfVerificar()" title="Comprueba que ninguna factura se ha alterado">🔒 Verificar registro</button>
+          <button class="btn btn-outline btn-sm" onclick="fcfExportarRegistros()">⬇ Registros</button>
+        </div>
+      </div>
+      <div class="cont-doc-list" id="fcf-lista">${fcfListaHTML()}</div>
+      <div style="font-size:11px;color:var(--text2);margin:10px 0 18px">Cada factura queda encadenada a la anterior con su huella (Reglamento VERI*FACTU). Una factura emitida no se puede editar ni borrar: se anula si fue un error, o se rectifica.</div>`}
 
       ${docList.length > 0 ? `
       <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);margin-bottom:10px">
-        ${docType}s guardadas (${docList.length})
+        ${isProforma ? docType + 's guardadas' : 'Facturas anteriores al registro'} (${docList.length})
       </div>
       <div class="cont-doc-list">
         ${docList.map(([id,d])=>`
@@ -7940,9 +8369,9 @@ function renderContView(c) {
             <div class="cont-doc-meta">${d.date||''} · Total: ${fmtEUR((d.total||0).toFixed(2))}</div>
           </div>
           <div class="cont-doc-actions">
-            <button class="btn btn-outline btn-sm" onclick="loadContDoc('${id}')">✏️</button>
+            ${isProforma ? `<button class="btn btn-outline btn-sm" onclick="loadContDoc('${id}')">✏️</button>` : ''}
             <button class="btn btn-outline btn-sm" onclick="downloadContPDF('${contTab}','${id}')">⬇ PDF</button>
-            <button class="btn btn-outline btn-sm" onclick="deleteContDoc('${id}')" style="color:#e05c5c">🗑</button>
+            ${isProforma ? `<button class="btn btn-outline btn-sm" onclick="deleteContDoc('${id}')" style="color:#e05c5c">🗑</button>` : ''}
           </div>
         </div>`).join('')}
       </div>` : ''}
@@ -7992,21 +8421,32 @@ function renderContLines() {
   if(!el) return;
   el.innerHTML = contLines.map((l,i)=>`
     <div class="cont-line-item">
-      <input type="text" placeholder="Descripción del servicio" value="${l.desc||''}"
-        oninput="contLines[${i}].desc=this.value;updateContTotals()"
+      <input type="text" placeholder="Descripción del servicio" value="${(l.desc||'').replace(/"/g,'&quot;')}"
+        oninput="fcContLinea(${i},'desc',this.value)"
         style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:7px 10px;font-size:12px;color:var(--text);width:100%">
       <input type="number" placeholder="Cant." value="${l.qty||1}" min="1" step="1"
-        oninput="contLines[${i}].qty=parseFloat(this.value)||1;updateContTotals()"
+        oninput="fcContLinea(${i},'qty',this.value)"
         style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:7px 8px;font-size:12px;color:var(--text);width:64px">
       <input type="number" placeholder="€/ud" value="${l.price||''}"
-        oninput="contLines[${i}].price=parseFloat(this.value)||0;updateContTotals()"
+        oninput="fcContLinea(${i},'price',this.value)"
         style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:7px 8px;font-size:12px;color:var(--text);width:80px">
-      <span style="font-size:12px;color:var(--gold);min-width:60px;text-align:right">
+      <span class="cf-line-total" style="font-size:12px;color:var(--gold);min-width:60px;text-align:right">
         ${fmtEUR(((l.qty||1)*(l.price||0)).toFixed(2))}
       </span>
       ${contLines.length>1?`<button onclick="removeContLine(${i})" style="background:none;border:none;color:#e05c5c;cursor:pointer;font-size:14px">✕</button>`:'<span style="width:20px"></span>'}
     </div>`).join('');
 }
+
+// Los campos de cada línea escriben aquí. Antes lo hacían directamente en
+// contLines desde el HTML, pero contLines vive dentro del módulo y desde el
+// HTML no se ve: las líneas nunca se guardaban y todo salía a 0 €.
+window.fcContLinea = function(i, campo, valor) {
+  const l = contLines[i]; if(!l) return;
+  if(campo==='desc') l.desc = valor;
+  else if(campo==='qty') l.qty = parseFloat(valor)||1;
+  else if(campo==='price') l.price = parseFloat(valor)||0;
+  updateContTotals();
+};
 
 window.addContLine = function() {
   contLines.push({desc:'',qty:1,price:0});
@@ -8021,7 +8461,7 @@ window.removeContLine = function(i) {
 
 function updateContTotals() {
   const base = contLines.reduce((s,l)=>s+(l.qty||1)*(l.price||0),0);
-  const ivaRate = parseFloat($('cf-iva')?.value||'10')/100;
+  const ivaRate = parseFloat($('cf-iva')?.value ?? '10')/100;
   const iva = base * ivaRate;
   const total = base + iva;
   const fmt = v => fmtEUR(v);
@@ -8029,7 +8469,11 @@ function updateContTotals() {
   if($('ct-iva'))   $('ct-iva').textContent   = fmt(iva);
   if($('ct-total')) $('ct-total').textContent = fmt(total);
   if($('ct-iva-label')) $('ct-iva-label').textContent = `IVA (${Math.round(ivaRate*100)}%)`;
-  renderContLines();
+  // Solo los importes de cada línea: volver a pintar los campos mientras se
+  // escribe quitaba el cursor del campo a cada tecla.
+  document.querySelectorAll('#cf-lines .cf-line-total').forEach((el,i)=>{
+    const l = contLines[i]; if(l) el.textContent = fmtEUR(((l.qty||1)*(l.price||0)).toFixed(2));
+  });
   return {base, iva, total};
 }
 
@@ -8090,7 +8534,7 @@ window.saveContDoc = async function(type) {
     email:  $('cf-email')?.value || '',
     address:$('cf-address')?.value || '',
     notes:  $('cf-notes')?.value || '',
-    ivaRate: parseFloat($('cf-iva')?.value||'10'),
+    ivaRate: parseFloat($('cf-iva')?.value ?? '10'),
     lines: [...contLines],
     base, iva, total,
     createdAt: new Date().toISOString()
@@ -8112,7 +8556,7 @@ window.loadContDoc = function(id) {
   if($('cf-email'))   $('cf-email').value   = doc.email||'';
   if($('cf-address')) $('cf-address').value = doc.address||'';
   if($('cf-notes'))   $('cf-notes').value   = doc.notes||'';
-  if($('cf-iva'))     $('cf-iva').value     = doc.ivaRate||10;
+  if($('cf-iva'))     $('cf-iva').value     = doc.ivaRate ?? 10;
   contLines = doc.lines || [{desc:'',qty:1,price:0}];
   renderContLines();
   updateContTotals();
@@ -8146,7 +8590,7 @@ window.downloadContPDF = async function(type, docId) {
       type, num:$('cf-num')?.value||'', date:$('cf-date')?.value||'',
       client:$('cf-client')?.value||'', nif:$('cf-nif')?.value||'',
       email:$('cf-email')?.value||'', address:$('cf-address')?.value||'',
-      notes:$('cf-notes')?.value||'', ivaRate:parseFloat($('cf-iva')?.value||'10'),
+      notes:$('cf-notes')?.value||'', ivaRate:parseFloat($('cf-iva')?.value ?? '10'),
       lines:[...contLines], base, iva, total
     };
   }
@@ -8189,6 +8633,10 @@ window.downloadContPDF = async function(type, docId) {
   pdf.setDrawColor(...gold); pdf.setLineWidth(0.3); pdf.line(mL,34,mR,34);
   y=42;
 
+  // Emisor
+  pdf.setFont('helvetica','normal'); pdf.setFontSize(8); pdf.setTextColor(...gray);
+  pdf.text([E.razonSocial, E.cif ? 'NIF '+E.cif : '', [E.calle,E.direccion].filter(Boolean).join(', ')].filter(Boolean).join(' · '), mR, 31, {align:'right'});
+  if(type==='proforma'){ pdf.setFontSize(7); pdf.text('Documento sin validez fiscal', mL, 31); }
   // Client info
   pdf.setFont('helvetica','bold'); pdf.setFontSize(9); pdf.setTextColor(...gold);
   pdf.text('CLIENTE', mL, y);
@@ -8230,7 +8678,7 @@ window.downloadContPDF = async function(type, docId) {
   const fmt2 = v => fmtEUR(v);
   const tRows = [
     ['Base imponible', fmt2(doc.base)],
-    [`IVA (${doc.ivaRate||10}%)`, fmt2(doc.iva)],
+    [`IVA (${doc.ivaRate ?? 10}%)`, fmt2(doc.iva)],
   ];
   tRows.forEach(([lbl,val])=>{
     pdf.setFont('helvetica','normal'); pdf.setFontSize(9); pdf.setTextColor(...gray);
@@ -9452,8 +9900,11 @@ window.bbExportCSV = async function(kind){
     } else if(kind==='expenses'){
       cols=[['date','Fecha'],['type','Tipo'],['vehicleName','Vehículo'],['driverName','Chófer'],['liters','Litros'],['km','Km'],['amount','Importe'],['notes','Notas']];
       rows=Object.values(bbExpenses||{});
+    } else if(kind==='facturas'){
+      const s=await get(ref(db,'contabilidad/_facturas')); cols=[['numSerie','Número'],['tipo','Tipo'],['fechaExpedicion','Fecha'],['clienteNombre','Cliente'],['clienteNif','NIF'],['base','Base'],['cuota','IVA'],['total','Total'],['estado','Estado'],['cobro','Cobro']];
+      rows=Object.values(s.val()||{}).map(f=>Object.assign({},f,{clienteNombre:f.cliente?.nombre||'',clienteNif:f.cliente?.nif||'',cobro:f.cobro?.estado||''}));
     } else if(kind==='contabilidad'){
-      const s=await get(ref(db,'contabilidad')); cols=[['type','Tipo'],['num','Número'],['date','Fecha'],['client','Cliente'],['nif','NIF'],['base','Base'],['iva','IVA'],['total','Total']]; rows=Object.values(s.val()||{});
+      const s=await get(ref(db,'contabilidad')); cols=[['type','Tipo'],['num','Número'],['date','Fecha'],['client','Cliente'],['nif','NIF'],['base','Base'],['iva','IVA'],['total','Total']]; rows=Object.values(s.val()||{}).filter(d=>d&&d.type);
     } else if(kind==='liquidaciones'){
       const s=await get(ref(db,'liquidaciones')); cols=[['choferName','Chófer'],['weekStart','Desde'],['weekEnd','Hasta'],['totalSemana','Total semana'],['totalChofer','A transferir'],['totalCash','Cash'],['savedAt','Guardado']]; rows=Object.values(s.val()||{});
     } else if(kind==='clients'){

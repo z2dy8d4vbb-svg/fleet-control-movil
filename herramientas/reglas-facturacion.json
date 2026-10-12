@@ -1,0 +1,35 @@
+{
+  "_LEEME": "Pegar DENTRO de \"rules\" > \"contabilidad\" en Firebase › Realtime Database › Reglas de cada empresa (las reglas más concretas mandan sobre la general de contabilidad solo para escritura si la general no concede ya .write; si la regla general de 'contabilidad' tiene .write true para la oficina, hay que quitarla de ahí y ponerla en '$otro'). Efecto: los registros y las facturas emitidas solo se pueden CREAR, nunca cambiar ni borrar; de una factura emitida solo se toca 'cobro', 'estado' (para anular) y 'rectificadaPor'.",
+  "contabilidad": {
+    "_registro": {
+      "estado": {
+        ".write": "auth != null && root.child('users/' + auth.uid + '/role').val() === 'office'"
+      },
+      "registros": {
+        "$seq": {
+          ".write": "auth != null && root.child('users/' + auth.uid + '/role').val() === 'office' && !data.exists() && newData.exists()"
+        }
+      }
+    },
+    "_facturas": {
+      "$num": {
+        ".write": "auth != null && root.child('users/' + auth.uid + '/role').val() === 'office' && !data.exists() && newData.exists()",
+        "cobro": {
+          ".write": "auth != null && root.child('users/' + auth.uid + '/role').val() === 'office'"
+        },
+        "estado": {
+          ".write": "auth != null && root.child('users/' + auth.uid + '/role').val() === 'office' && newData.val() === 'anulada'"
+        },
+        "anulacion": {
+          ".write": "auth != null && root.child('users/' + auth.uid + '/role').val() === 'office' && !data.exists()"
+        },
+        "rectificadaPor": {
+          ".write": "auth != null && root.child('users/' + auth.uid + '/role').val() === 'office' && !data.exists()"
+        }
+      }
+    },
+    "$otro": {
+      ".write": "auth != null && root.child('users/' + auth.uid + '/role').val() === 'office'"
+    }
+  }
+}

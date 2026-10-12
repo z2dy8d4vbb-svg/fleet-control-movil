@@ -13,3 +13,4 @@ ios/App/DerivedData/
 *.aab
 *.ipa
 .DS_Store
+salida/

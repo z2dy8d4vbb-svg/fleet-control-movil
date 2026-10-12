@@ -1,0 +1,27 @@
+{
+  "firebase": {
+    "apiKey": "AIzaSyCLAwf5JoAVrptdxnwPFyBpQk9aeqnswY4",
+    "authDomain": "fleet-control-f5c1e.firebaseapp.com",
+    "projectId": "fleet-control-f5c1e",
+    "storageBucket": "fleet-control-f5c1e.firebasestorage.app",
+    "messagingSenderId": "686725543920",
+    "appId": "1:686725543920:web:78a4ef43a068dcf33ecf35",
+    "databaseURL": "https://fleet-control-f5c1e-default-rtdb.europe-west1.firebasedatabase.app"
+  },
+  "nombre": "Mediterráneo Transfers",
+  "lema": "IBIZA · FORMENTERA",
+  "nombreCorto": "Mediterráneo",
+  "iniciales": "MT",
+  "color": "#22c8e6",
+  "razonSocial": "Mediterráneo Transfers, S.L.",
+  "cif": "B00000000",
+  "calle": "Calle de Ejemplo 1",
+  "direccion": "07800 Ibiza",
+  "provincia": "Baleares",
+  "telefono": "+34 600 00 00 00",
+  "email": "reservas@mediterraneotransfers.demo",
+  "web": "www.mediterraneotransfers.demo",
+  "webCorta": "mediterraneotransfers.demo",
+  "appUrl": "https://wolftechsoluciones.com/demo",
+  "authDominio": "mediterraneotransfers.demo"
+}
