@@ -1543,6 +1543,22 @@ setTimeout(function () {
     <div class="km-box">
       <label class="km-lbl">🛣️ Km finales del vehículo</label>
       <input class="km-inp" type="text" inputmode="numeric" id="lks-km" placeholder="Ej: 45.580" oninput="fmtKmInput(this)">
+      <div class="km-hint" id="lks-km-hint"></div>
+    </div>
+    <div class="bb-check-box" id="bb-lks-check">
+      <div class="ch-h">✅ Cómo dejas el vehículo</div>
+      <div class="bb-check-item">
+        <span class="ci-l">⛽ Nivel de combustible</span>
+        <div class="bb-fuel-seg" id="bb-fin-fuel" data-val="">
+          <button type="button" onclick="bbChkFuel(this,'bajo')">🔴</button>
+          <button type="button" onclick="bbChkFuel(this,'medio')">🟡</button>
+          <button type="button" onclick="bbChkFuel(this,'lleno')">🟢</button>
+        </div>
+      </div>
+      <label class="bb-check-item" style="cursor:pointer"><span class="ci-l">🧼 Lo dejo limpio</span><input type="checkbox" id="bb-fin-clean" checked style="width:18px;height:18px;accent-color:var(--gold)"></label>
+      <label class="bb-check-item" style="cursor:pointer"><span class="ci-l">🔑 Llaves y documentación en su sitio</span><input type="checkbox" id="bb-fin-docs" checked style="width:18px;height:18px;accent-color:var(--gold)"></label>
+      <div class="bb-check-item" style="border:none;padding-bottom:0"><span class="ci-l">⚠️ Daños o incidencias de hoy</span></div>
+      <input class="km-inp" id="bb-fin-damage" type="text" placeholder="Sin novedad (o describe el problema)" style="font-size:13px;font-weight:400;padding:9px 12px">
     </div>
     <button class="btn-gold" onclick="lksConfirm()">✅ Cerrar jornada</button>
     <button class="btn-skip" onclick="lksSkip()">Saltar</button>
@@ -3605,19 +3621,25 @@ window.renderTab = function(tab) {
 // esconden los botones que escriben. Es la capa visible: la que de verdad
 // impide escribir son las reglas de Firebase de cada empresa.
 const FC_ESCRIBE = /save|delete|del[A-Z]|remove|borrar|eliminar|guardar|add[A-Z]|showAdd|edit|nuevo|new[A-Z]|import|assign|asignar|complete|start|arrived|llego|mark|upload|subir|approve|reject|convert|cancel|confirm|emit|cobro|anular|rectific|resolve|liquid|pagar|paid/i;
+let _fcSoloLecturaOn = false;
 function fcSoloLectura() {
-  const c = $('content');
-  if (!c || c._soloLectura) return;
-  c._soloLectura = true;
+  if (_fcSoloLecturaOn) return;
+  _fcSoloLecturaOn = true;
+  // Pantallas y ventanas (la ficha del vehículo, un servicio...) por igual.
+  const zonas = () => [$('content'), ...document.querySelectorAll('.modal-overlay')].filter(Boolean);
+  let pend = false;
   const aplicar = () => {
-    c.querySelectorAll('input:not([type=search]):not([data-libre]),select:not([data-libre]),textarea').forEach(el => {
-      if (!el.disabled) el.disabled = true;
-    });
-    c.querySelectorAll('button[onclick],a[onclick],[onclick].btn').forEach(el => {
-      if (FC_ESCRIBE.test(el.getAttribute('onclick') || '')) el.style.display = 'none';
+    pend = false;
+    if (currentUser?.role !== 'guest') return;
+    zonas().forEach(z => {
+      z.querySelectorAll('input:not([type=search]):not([data-libre]),select:not([data-libre]),textarea').forEach(el => { if (!el.disabled) el.disabled = true; });
+      z.querySelectorAll('button[onclick],a[onclick],[onclick].btn').forEach(el => {
+        if (FC_ESCRIBE.test(el.getAttribute('onclick') || '') && el.style.display !== 'none') el.style.display = 'none';
+      });
     });
   };
-  new MutationObserver(aplicar).observe(c, { childList: true, subtree: true });
+  new MutationObserver(() => { if (!pend) { pend = true; requestAnimationFrame(aplicar); } })
+    .observe(document.body, { childList: true, subtree: true });
   aplicar();
 }
 
@@ -5138,11 +5160,37 @@ function openVehicleDetail(vid) {
           </div>
         </div>
       </div>`;
+    c.insertAdjacentHTML('beforeend', fcJornadasHTML(vd.jornadas));
     setTimeout(()=>{ const d=$('int-date'); if(d)d.value=new Date().toISOString().split('T')[0]; },50);
     openModal('modal-vehicle');
   });
 }
 window.openVehicleDetail = openVehicleDetail;
+
+// Últimas jornadas del vehículo: conductor, km recorridos y la revisión de
+// entrada y de salida. Una revisión con algo mal se marca en ámbar.
+function fcJornadasHTML(jornadas) {
+  const lista = Object.values(jornadas || {}).filter(Boolean).sort((a, b) => String(b.inicio).localeCompare(String(a.inicio))).slice(0, 15);
+  const comb = { bajo: '🔴', medio: '🟡', lleno: '🟢' };
+  const rev = (ch, etiqueta) => {
+    if (!ch) return `<span style="color:var(--text3)">${etiqueta}: sin revisión</span>`;
+    const mal = [ch.clean === false && 'sucio', ch.tires === false && 'neumáticos', ch.docs === false && 'documentación', ch.fuel === 'bajo' && 'poco combustible'].filter(Boolean);
+    const txt = `${etiqueta}: ${comb[ch.fuel] || '⛽?'}${mal.length ? ' · ' + mal.join(', ') : ' · OK'}${ch.damage ? ' · ⚠️ ' + bbEsc(ch.damage) : ''}`;
+    return `<span style="color:${mal.length || ch.damage ? '#f59e0b' : 'var(--text2)'}">${txt}</span>`;
+  };
+  const filas = lista.map(j => {
+    const d = new Date(j.inicio);
+    const hora = x => x ? new Date(x).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : '…';
+    const rec = j.kmFin && j.kmInicio ? (j.kmFin - j.kmInicio).toLocaleString('es-ES') + ' km' : (j.fin ? '' : 'en curso');
+    return `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:11px;line-height:1.5">
+      <div style="display:flex;justify-content:space-between;gap:8px"><b style="color:var(--text);font-size:12px">${bbEsc(j.conductor || '—')}</b><span style="color:var(--gold)">${rec}</span></div>
+      <div style="color:var(--text2)">${d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' })} · ${hora(j.inicio)}–${hora(j.fin)} · ${Number(j.kmInicio || 0).toLocaleString('es-ES')}${j.kmFin ? ' → ' + Number(j.kmFin).toLocaleString('es-ES') : ''} km</div>
+      <div>${rev(j.checkInicio, 'Entrada')}</div><div>${j.fin ? rev(j.checkFin, 'Salida') : ''}</div></div>`;
+  }).join('');
+  return `<div style="background:var(--bg2);border-radius:10px;padding:12px;margin-top:14px">
+    <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px">🛣️ Últimas jornadas</div>
+    ${filas || '<div style="font-size:12px;color:var(--text2);text-align:center;padding:8px">Todavía no hay jornadas registradas con este vehículo.</div>'}</div>`;
+}
 
 function renderMaintenance(c) {
   get(ref(db,'maintenance')).then(snap=>{
@@ -5717,7 +5765,10 @@ window.vksConfirm = async function() {
   } catch(e) { /* if no previous km, allow any */ }
   _sessionVid=_vksSelected;
   const v=VEHICLES.find(x=>x.id===_vksSelected);
-  set(ref(db,`vehicle_sessions/${_vksSelected}`),{uid:currentUser.uid,driverName:currentUser.name,startKm:km,startTime:new Date().toISOString(),active:true});
+  const _inicio=new Date().toISOString();
+  set(ref(db,`vehicle_sessions/${_vksSelected}`),{uid:currentUser.uid,driverName:currentUser.name,startKm:km,startTime:_inicio,active:true});
+  // Jornada en la ficha del vehículo: la oficina ve quién lo llevó, km y cómo lo cogió y lo dejó.
+  set(ref(db,`maintenance/${_vksSelected}/jornadas/${fcClaveJornada(_inicio)}`),{conductor:currentUser.name||'',uid:currentUser.uid,inicio:_inicio,kmInicio:km}).catch(()=>{});
   push(ref(db,'km_log'),{vehicleId:_vksSelected,vehicleName:v.name,driverUid:currentUser.uid,driverName:currentUser.name,km,type:'start',timestamp:new Date().toISOString()});
   update(ref(db,`maintenance/${_vksSelected}`),{km, lastDriver:currentUser.name, lastDriverUid:currentUser.uid, lastUpdate:new Date().toISOString()});
   $('vks-screen').style.display='none';
@@ -5727,18 +5778,33 @@ window.vksConfirm = async function() {
 
 window.vksSkip = function() { $('vks-screen').style.display='none'; };
 
+const fcClaveJornada = iso => String(iso).replace(/[.:]/g, '-');
+
 function showLogoutKm() {
   if(!_sessionVid){doSignOut();return;}
   const v=VEHICLES.find(x=>x.id===_sessionVid);
   $('lks-vehicle').textContent=v?`${v.icon} ${v.name}`:'';
   $('lks-km').value='';
+  if($('lks-km-hint')) $('lks-km-hint').textContent='';
+  get(ref(db,`vehicle_sessions/${_sessionVid}/startKm`)).then(s=>{ if(s.val()&&$('lks-km-hint')) $('lks-km-hint').textContent='Al empezar: '+Number(s.val()).toLocaleString('es-ES')+' km'; }).catch(()=>{});
   $('lks-screen').style.display='block';
 }
 
-window.lksConfirm = function() {
+window.lksConfirm = async function() {
   const km=parseInt($('lks-km').value.replace(/\./g,'').replace(/,/g,''));
   if(!km||km<0){toast('Introduce los km finales');return;}
   const v=VEHICLES.find(x=>x.id===_sessionVid);
+  let ses=null; try{ ses=(await get(ref(db,`vehicle_sessions/${_sessionVid}`))).val(); }catch(e){}
+  if(ses?.startKm && km<ses.startKm){ toast(`⚠️ Menos km que al empezar (${Number(ses.startKm).toLocaleString('es-ES')})`); return; }
+  const fin=new Date().toISOString();
+  const damage=($('bb-fin-damage')?.value||'').trim();
+  const chkFin={fuel:$('bb-fin-fuel')?.dataset.val||'',clean:!!$('bb-fin-clean')?.checked,docs:!!$('bb-fin-docs')?.checked,damage,by:currentUser.name,at:fin};
+  push(ref(db,'checklists'),Object.assign({vehicleId:_sessionVid,driverUid:currentUser.uid,type:'end'},chkFin)).catch(()=>{});
+  if(ses?.startTime) update(ref(db,`maintenance/${_sessionVid}/jornadas/${fcClaveJornada(ses.startTime)}`),{fin,kmFin:km,checkFin:chkFin}).catch(()=>{});
+  if(damage){
+    try{ const s=await get(ref(db,'maintenance/'+_sessionVid+'/incidents')); const arr=Array.isArray(s.val())?s.val():(s.val()?Object.values(s.val()):[]);
+      arr.push({id:Date.now(),description:damage,reportedBy:currentUser.name,resolved:false}); await set(ref(db,'maintenance/'+_sessionVid+'/incidents'),arr); }catch(e){}
+  }
   push(ref(db,'km_log'),{vehicleId:_sessionVid,vehicleName:v?.name||'',driverUid:currentUser.uid,driverName:currentUser.name,km,type:'end',timestamp:new Date().toISOString()});
   update(ref(db,`maintenance/${_sessionVid}`),{km});
   update(ref(db,`vehicle_sessions/${_sessionVid}`),{active:false,endKm:km,endTime:new Date().toISOString()});
@@ -9929,6 +9995,7 @@ if(typeof _bbOrigVksConfirm==='function'){
       const damage=(document.getElementById('bb-chk-damage')?.value||'').trim();
       const chk={fuel,clean:!!document.getElementById('bb-chk-clean')?.checked,tires:!!document.getElementById('bb-chk-tires')?.checked,docs:!!document.getElementById('bb-chk-docs')?.checked,damage,by:currentUser.name,at:new Date().toISOString()};
       update(ref(db,'vehicle_sessions/'+vid),{checklist:chk}).catch(()=>{});
+      get(ref(db,'vehicle_sessions/'+vid+'/startTime')).then(s=>{ if(s.val()) update(ref(db,`maintenance/${vid}/jornadas/${fcClaveJornada(s.val())}`),{checkInicio:chk}).catch(()=>{}); }).catch(()=>{});
       push(ref(db,'checklists'),Object.assign({vehicleId:vid,driverUid:currentUser.uid},chk)).catch(()=>{});
       if(damage){
         get(ref(db,'maintenance/'+vid+'/incidents')).then(s=>{ const arr=Array.isArray(s.val())?s.val():(s.val()?Object.values(s.val()):[]); arr.push({id:Date.now(),description:damage,reportedBy:currentUser.name,resolved:false}); set(ref(db,'maintenance/'+vid+'/incidents'),arr).catch(()=>{}); }).catch(()=>{});
