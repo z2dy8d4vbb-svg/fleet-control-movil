@@ -5553,7 +5553,7 @@ function renderAccounts(c, weekOffset, targetUid) {
 
   const total=trips.reduce((s,[,t])=>(parseFloat(t.price)||0)+(t.waitCharge||0)+s,0);
   const comm=trips.reduce((s,[,t])=>(parseFloat(t.commission)||0)+s,0);
-  const share=Math.round((total-comm)*0.30*100)/100;
+  const share=Math.round((total-comm)*bbRate('driverSplit')*100)/100;
   const fmt=d=>d.toLocaleDateString('es-ES',{day:'2-digit',month:'short'});
 
   c.innerHTML=`<div class="sec-title" style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
@@ -5568,11 +5568,11 @@ function renderAccounts(c, weekOffset, targetUid) {
     <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
       <div class="stat-card"><div class="stat-num">${trips.length}</div><div class="stat-lbl">Viajes</div></div>
       <div class="stat-card"><div class="stat-num" style="color:var(--gold)">${fmtEUR(total)}</div><div class="stat-lbl">Facturado</div></div>
-      <div class="stat-card"><div class="stat-num" style="color:var(--success)">${fmtEUR(share)}</div><div class="stat-lbl">Tu parte 30%</div></div>
+      <div class="stat-card"><div class="stat-num" style="color:var(--success)">${fmtEUR(share)}</div><div class="stat-lbl">Tu parte ${fcPctC()}</div></div>
     </div>
     ${trips.length?trips.sort(([,a],[,b])=>new Date(a.datetime)-new Date(b.datetime)).map(([,t])=>{
       const amt=(parseFloat(t.price)||0)+(t.waitCharge||0);
-      const net=Math.round((amt-(parseFloat(t.commission)||0))*0.30*100)/100;
+      const net=Math.round((amt-(parseFloat(t.commission)||0))*bbRate('driverSplit')*100)/100;
       return `<div class="earning-card">
         <div class="earning-main">
           <div><div class="earning-trip">${t.client||'—'}</div><div class="earning-meta">${fmtDate(t.datetime)}</div><div class="earning-meta">${t.origin||'—'} → ${t.destination||'—'}</div></div>
@@ -5596,7 +5596,7 @@ async function downloadAccountsPDF(weekOffset) {
   const trips=Object.values(all).filter(t=>t.driverUid===currentUser.uid&&t.status==='completed'&&t.datetime&&new Date(t.datetime)>=weekStart&&new Date(t.datetime)<weekEnd);
   const total=trips.reduce((s,t)=>(parseFloat(t.price)||0)+(t.waitCharge||0)+s,0);
   const comm=trips.reduce((s,t)=>(parseFloat(t.commission)||0)+s,0);
-  const share=Math.round((total-comm)*0.30*100)/100;
+  const share=Math.round((total-comm)*bbRate('driverSplit')*100)/100;
   const jsPDF=await loadJsPDF();
   const doc=new jsPDF({unit:'mm',format:'a4'});
   const W=210,M=20;let y=20;
@@ -5609,13 +5609,13 @@ async function downloadAccountsPDF(weekOffset) {
   y=56;
   doc.setFillColor(30,30,30);doc.rect(M,y,W-M*2,8,'F');
   doc.setTextColor(140,135,130);doc.setFontSize(7);doc.setFont('helvetica','normal');
-  doc.text('FECHA',M+3,y+5.5);doc.text('RUTA',M+35,y+5.5);doc.text('PRECIO',W-M-25,y+5.5,{align:'right'});doc.text('TU 30%',W-M-3,y+5.5,{align:'right'});
+  doc.text('FECHA',M+3,y+5.5);doc.text('RUTA',M+35,y+5.5);doc.text('PRECIO',W-M-25,y+5.5,{align:'right'});doc.text('TU '+fcPctC(),W-M-3,y+5.5,{align:'right'});
   y+=10;
   trips.sort((a,b)=>new Date(a.datetime)-new Date(b.datetime)).forEach((t,i)=>{
     if(y>255){doc.addPage();y=20;}
     if(i%2===0){doc.setFillColor(245,246,248);doc.rect(M,y-1,W-M*2,9,'F');}
     const amt=(parseFloat(t.price)||0)+(t.waitCharge||0);
-    const net=Math.round((amt-(parseFloat(t.commission)||0))*0.30*100)/100;
+    const net=Math.round((amt-(parseFloat(t.commission)||0))*bbRate('driverSplit')*100)/100;
     const dt=new Date(t.datetime).toLocaleDateString('es-ES',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
     doc.setTextColor(55,57,62);doc.setFontSize(7);
     doc.text(dt,M+3,y+5.5);
@@ -5633,7 +5633,7 @@ async function downloadAccountsPDF(weekOffset) {
   if(comm>0){doc.setTextColor(120,115,110);doc.setFontSize(8);doc.text('Com. concierge',M+6,y+20);doc.setTextColor(245,158,11);doc.setFontSize(11);doc.text('-€'+comm,W-M-6,y+20,{align:'right'});}
   doc.setDrawColor(50,50,50);doc.setLineWidth(0.2);doc.line(M+4,y+26,W-M-4,y+26);
   doc.setTextColor(34,197,94);doc.setFontSize(14);doc.setFont('helvetica','bold');doc.text(fmtEUR(share),W-M-6,y+34,{align:'right'});
-  doc.setTextColor(120,115,110);doc.setFontSize(8);doc.setFont('helvetica','normal');doc.text('Tu parte (30%)',M+6,y+34);
+  doc.setTextColor(120,115,110);doc.setFontSize(8);doc.setFont('helvetica','normal');doc.text('Tu parte ('+fcPctC()+')',M+6,y+34);
   doc.setTextColor(70,70,70);doc.setFontSize(7);doc.text((E.nombre+' · ')+new Date().toLocaleDateString('es-ES'),W/2,290,{align:'center'});
   fcGuardaPDF(doc, (E.nombreCorto+'_')+currentUser.name+'_'+fmt(weekStart)+'.pdf');
 }
@@ -6671,7 +6671,7 @@ function renderStats(c) {
           <div style="font-size:11px;color:var(--text2)">${d.count} viajes</div></div>
           <div style="text-align:right">
             <div style="font-size:14px;color:var(--gold);font-weight:600">${fmtEUR(d.revenue)}</div>
-            <div style="font-size:10px;color:var(--success)">${fmtEUR(Math.round(d.revenue*0.3))} (30%)</div>
+            <div style="font-size:10px;color:var(--success)">${fmtEUR(Math.round(d.revenue*bbRate('driverSplit')))} (${fcPctC()})</div>
           </div>
         </div>`).join('') || '<div style="font-size:12px;color:var(--text2)">Sin datos</div>'}
     </div>
@@ -8287,7 +8287,7 @@ function renderLiquidacion(c) {
         <label>Chofer</label>
         ${isOffice ? `<select class="liq-inp" id="liq-name" style="padding-left:8px;background:#1a1a2e;color:#e4e4e7">
           <option value="" style="background:#1a1a2e;color:#e4e4e7">Seleccionar chofer</option>
-          ${Object.values(allUsers).filter(u=>u.role==='driver').map(u=>`<option value="${u.name}">${u.name}</option>`).join('')}
+          ${Object.entries(allUsers).filter(([,u])=>u&&u.role==='driver').map(([uid,u])=>`<option value="${uid}">${bbEsc(u.name||uid)}</option>`).join('')}
         </select>` : `<input class="liq-inp" id="liq-name" type="text" value="${name}" style="padding-left:12px" readonly>`}
       </div>
       <div class="liq-field" style="margin-top:10px">
@@ -8297,6 +8297,8 @@ function renderLiquidacion(c) {
           <span style="color:var(--text2);font-size:12px">al</span>
           <input class="liq-inp" id="liq-week-end" type="date" style="flex:1">
         </div>
+        <button type="button" class="btn btn-outline btn-sm" style="margin-top:10px;width:100%;justify-content:center" onclick="liqDesdeServicios()">⚡ Rellenar VTC con los servicios de esa semana</button>
+        <div id="liq-auto-info" style="font-size:11px;color:var(--text2);margin-top:6px"></div>
       </div>
       ${isOffice ? `<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px"><div style="font-size:10px;text-transform:uppercase;color:var(--text2);margin-bottom:8px;font-weight:600">Guardadas</div><div id="liq-history"></div></div>` : ''}
     </div>
@@ -8341,7 +8343,7 @@ function renderLiquidacion(c) {
     <div class="liq-card" id="liq-results" style="opacity:0.4;transition:opacity 0.3s">
       <div class="liq-divider"><span>Uber</span></div>
       <div class="liq-row"><span class="lk">Total Uber bruto</span><span class="lv" id="lr-uber"></span></div>
-      <div class="liq-row indent neg"><span class="lk">- Impuestos (10%)</span><span class="lv" id="lr-tax"></span></div>
+      <div class="liq-row indent neg"><span class="lk">- Impuestos (${fcPctU()})</span><span class="lv" id="lr-tax"></span></div>
       <div class="liq-row indent bold"><span class="lk">Neto Uber</span><span class="lv" id="lr-neto"></span></div>
       <div class="liq-divider"><span>VTC Privado</span></div>
       <div class="liq-row"><span class="lk">VTC en Cash</span><span class="lv" id="lr-vtc-cash"></span></div>
@@ -8349,7 +8351,7 @@ function renderLiquidacion(c) {
       <div class="liq-row bold"><span class="lk">Total VTC</span><span class="lv" id="lr-vtc-total"></span></div>
       <div class="liq-divider"><span>Total Semana</span></div>
       <div class="liq-row accent bold"><span class="lk">Neto Uber + VTC</span><span class="lv" id="lr-semana"></span></div>
-      <div class="liq-row indent accent"><span class="lk">x 30% comision chofer</span><span class="lv" id="lr-com30"></span></div>
+      <div class="liq-row indent accent"><span class="lk">x ${fcPctC()} comisión chófer</span><span class="lv" id="lr-com30"></span></div>
       <div class="liq-row indent" id="lr-inc-row" style="display:none"><span class="lk">+ Incentivo</span><span class="lv" id="lr-inc"></span></div>
       <div class="liq-row indent" id="lr-prop-u-row" style="display:none"><span class="lk">+ Propina Uber</span><span class="lv" id="lr-prop-u"></span></div>
       <div class="liq-row indent" id="lr-prop-v-row" style="display:none"><span class="lk">+ Propina VTC</span><span class="lv" id="lr-prop-v"></span></div>
@@ -8385,7 +8387,42 @@ function renderLiquidacion(c) {
     if (el) el.addEventListener('input', liqCalc);
   });
   if (isOffice) setTimeout(() => { if(window.liqLoadHistory) liqLoadHistory(); }, 500);
+  // Por defecto, la última semana completa (lunes a domingo).
+  const hoy = new Date(); hoy.setHours(12,0,0,0);
+  const lun = new Date(hoy); lun.setDate(hoy.getDate() - ((hoy.getDay()+6)%7) - 7);
+  const dom = new Date(lun); dom.setDate(lun.getDate() + 6);
+  const iso = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  if ($('liq-week-start')) $('liq-week-start').value = iso(lun);
+  if ($('liq-week-end')) $('liq-week-end').value = iso(dom);
 }
+
+// Suma los servicios completados del chófer en la semana elegida: total VTC
+// (precio + espera), lo cobrado en efectivo, por TPV y las propinas. Lo que
+// pagó el cliente a la empresa (transferencia) cuenta en el total pero no
+// pasa por el chófer.
+window.liqDesdeServicios = function() {
+  const sel = $('liq-name');
+  const uid = currentUser.role === 'office' ? (sel?.value || '') : currentUser.uid;
+  const ini = $('liq-week-start')?.value, fin = $('liq-week-end')?.value;
+  if (!uid) { toast('Elige el chófer'); return; }
+  if (!ini || !fin) { toast('Indica la semana'); return; }
+  const lista = Object.values(allTrips || {}).filter(t => t && t.driverUid === uid && t.status === 'completed'
+    && (t.datetime || '').slice(0, 10) >= ini && (t.datetime || '').slice(0, 10) <= fin);
+  const imp = t => (parseFloat(t.amountCollected) || ((parseFloat(t.price) || 0) + (parseFloat(t.waitCharge) || 0)));
+  const r2 = v => Math.round(v * 100) / 100;
+  const total = r2(lista.reduce((s, t) => s + imp(t), 0));
+  const cash = r2(lista.filter(t => t.payment === 'cash').reduce((s, t) => s + imp(t), 0));
+  const tpv = r2(lista.filter(t => t.payment === 'tpv').reduce((s, t) => s + imp(t), 0));
+  const prop = r2(lista.reduce((s, t) => s + (parseFloat(t.tip) || 0), 0));
+  const pon = (id, v) => { const el = $(id); if (el) el.value = v ? v : ''; };
+  pon('liq-vtc-total-input', total); pon('liq-vtc-cash', cash); pon('liq-vtc-tpv', tpv); pon('liq-vtc-prop', prop);
+  const empresa = r2(total - cash - tpv);
+  const info = $('liq-auto-info');
+  if (info) info.textContent = lista.length
+    ? `${lista.length} servicio${lista.length === 1 ? '' : 's'}: ${fmtEUR(total)} · efectivo ${fmtEUR(cash)} · TPV ${fmtEUR(tpv)}${empresa > 0 ? ' · pagado a la empresa ' + fmtEUR(empresa) : ''}. Uber se sigue poniendo a mano.`
+    : 'No hay servicios completados de ese chófer en esas fechas.';
+  liqCalc();
+};
 
 // ── CONTABILIDAD STATE (module-level globals) ──
 let contTab = 'facturas';
@@ -8869,7 +8906,7 @@ window.downloadAccountsPDFFor = async function(uid, weekOffset) {
   const trips=Object.values(allTrips).filter(t=>t.driverUid===uid&&t.status==='completed'&&t.datetime&&new Date(t.datetime)>=weekStart&&new Date(t.datetime)<weekEnd);
   const total=trips.reduce((s,t)=>(parseFloat(t.price)||0)+(t.waitCharge||0)+s,0);
   const comm=trips.reduce((s,t)=>(parseFloat(t.commission)||0)+s,0);
-  const share=Math.round((total-comm)*0.30*100)/100;
+  const share=Math.round((total-comm)*bbRate('driverSplit')*100)/100;
   const jsPDF=await loadJsPDF(); const doc=new jsPDF({unit:'mm',format:'a4'});
   const W=210,M=20;let y=20;
   const fmt=d=>new Date(d).toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'});
@@ -8879,10 +8916,10 @@ window.downloadAccountsPDFFor = async function(uid, weekOffset) {
   doc.setTextColor(...FC_RGB_CLARO);doc.setFontSize(14);doc.setFont('helvetica','bold');doc.text(u.name,W/2,40,{align:'center'});
   y=56;doc.setFillColor(30,30,30);doc.rect(M,y,W-M*2,8,'F');
   doc.setTextColor(140,135,130);doc.setFontSize(7);doc.setFont('helvetica','normal');
-  doc.text('FECHA',M+3,y+5.5);doc.text('RUTA',M+35,y+5.5);doc.text('PRECIO',W-M-25,y+5.5,{align:'right'});doc.text('30%',W-M-3,y+5.5,{align:'right'});y+=10;
+  doc.text('FECHA',M+3,y+5.5);doc.text('RUTA',M+35,y+5.5);doc.text('PRECIO',W-M-25,y+5.5,{align:'right'});doc.text(fcPctC(),W-M-3,y+5.5,{align:'right'});y+=10;
   trips.sort((a,b)=>new Date(a.datetime)-new Date(b.datetime)).forEach((t,i)=>{
     if(y>255){doc.addPage();y=20;}if(i%2===0){doc.setFillColor(245,246,248);doc.rect(M,y-1,W-M*2,9,'F');}
-    const amt=(parseFloat(t.price)||0)+(t.waitCharge||0);const net=Math.round((amt-(parseFloat(t.commission)||0))*0.30*100)/100;
+    const amt=(parseFloat(t.price)||0)+(t.waitCharge||0);const net=Math.round((amt-(parseFloat(t.commission)||0))*bbRate('driverSplit')*100)/100;
     const dt=new Date(t.datetime).toLocaleDateString('es-ES',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
     const route=(t.origin||'—')+' → '+(t.destination||'—');
     doc.setTextColor(55,57,62);doc.setFontSize(7);doc.text(dt,M+3,y+5.5);doc.text(route.length>32?route.slice(0,32)+'…':route,M+35,y+5.5);
@@ -8892,7 +8929,7 @@ window.downloadAccountsPDFFor = async function(uid, weekOffset) {
   doc.setTextColor(120,115,110);doc.setFontSize(8);doc.text('Total facturado',M+6,y+10);doc.setTextColor(...FC_RGB_CLARO);doc.setFontSize(11);doc.text(fmtEUR(total),W-M-6,y+10,{align:'right'});
   doc.setDrawColor(50,50,50);doc.setLineWidth(0.2);doc.line(M+4,y+26,W-M-4,y+26);
   doc.setTextColor(34,197,94);doc.setFontSize(14);doc.setFont('helvetica','bold');doc.text(fmtEUR(share),W-M-6,y+34,{align:'right'});
-  doc.setTextColor(120,115,110);doc.setFontSize(8);doc.setFont('helvetica','normal');doc.text('Parte chófer (30%)',M+6,y+34);
+  doc.setTextColor(120,115,110);doc.setFontSize(8);doc.setFont('helvetica','normal');doc.text('Parte chófer ('+fcPctC()+')',M+6,y+34);
   doc.setTextColor(70,70,70);doc.setFontSize(7);doc.text(E.nombre,W/2,290,{align:'center'});
   fcGuardaPDF(doc, (E.nombreCorto+'_')+u.name.replace(/ /g,'_')+'_'+fmt(weekStart)+'.pdf');
 };
@@ -8953,7 +8990,7 @@ function buildInformeFull(c) {
     const cashCobrado    = trips.filter(([,t])=>t.payment==='cash').reduce((s,[,t])=>(parseFloat(t.price)||0)+(t.waitCharge||0)+s, 0);
     const tpvCobrado     = totalServicios - cashCobrado;
     const comm           = trips.reduce((s,[,t])=>(parseFloat(t.commission)||0)+s, 0);
-    const gananciaChofer = Math.round((totalServicios - comm) * 0.30 * 100) / 100;
+    const gananciaChofer = Math.round((totalServicios - comm) * bbRate('driverSplit') * 100) / 100;
     const gananciaEmpresa = Math.round((totalServicios - comm) * 0.70 * 100) / 100;
     const isExp = _informeExpanded[uid];
 
@@ -8980,7 +9017,7 @@ function buildInformeFull(c) {
       html += statBox('Total servicios VTC', fmtE(totalServicios), 'var(--text)');
       html += statBox('💵 Cash cobrado', fmtE(cashCobrado), '#f97316');
       html += statBox('💳 TPV cobrado', fmtE(tpvCobrado), 'var(--text2)');
-      html += statBox('🏆 Ganancia chófer (30%)', fmtE(gananciaChofer), '#22c55e');
+      html += statBox('🏆 Ganancia chófer ('+fcPctC()+')', fmtE(gananciaChofer), '#22c55e');
       html += statBox('🏢 Ganancia empresa (70%)', fmtE(gananciaEmpresa), 'var(--gold)');
       html += statBox('📊 Nº servicios', trips.length+' viajes', 'var(--text)');
       html += '</div>';
@@ -8990,7 +9027,7 @@ function buildInformeFull(c) {
         html += '<div style="border-top:1px solid var(--border);max-height:300px;overflow-y:auto">';
         trips.sort(([,a],[,b])=>new Date(a.datetime)-new Date(b.datetime)).forEach(([,t]) => {
           const amt = (parseFloat(t.price)||0)+(t.waitCharge||0);
-          const net = Math.round((amt-(parseFloat(t.commission)||0))*0.30*100)/100;
+          const net = Math.round((amt-(parseFloat(t.commission)||0))*bbRate('driverSplit')*100)/100;
           const isCash = t.payment === 'cash';
           const dt = new Date(t.datetime).toLocaleDateString('es-ES',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
           html += '<div style="padding:10px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,0.04)">';
@@ -9001,7 +9038,7 @@ function buildInformeFull(c) {
           html += '</div>';
           html += '<div style="text-align:right;flex-shrink:0">';
           html += '<div style="font-size:12px;font-weight:700;color:var(--gold)">'+fmtE(amt)+'</div>';
-          html += '<div style="font-size:10px;color:#22c55e">30%: '+fmtE(net)+'</div>';
+          html += '<div style="font-size:10px;color:#22c55e">'+fcPctC()+': '+fmtE(net)+'</div>';
           html += '</div>';
           html += '</div>';
         });
@@ -9048,7 +9085,7 @@ function liqCalc() {
   const vtcProp      = g('liq-vtc-prop');
   const vtcTotalInput = g('liq-vtc-total-input');
 
-  const uberTax     = uberBruto * 0.10;
+  const uberTax     = uberBruto * bbRate('uberTax');
   const uberNeto    = uberBruto - uberTax;
   // Use the total input if provided, otherwise sum cash+tpv
   const vtcTotal    = vtcTotalInput > 0 ? vtcTotalInput : (vtcCash + vtcTpv);
@@ -9056,7 +9093,7 @@ function liqCalc() {
   const vtcWarn = document.getElementById('vtc-cash-warn');
   if(vtcWarn) vtcWarn.style.display = (vtcTotalInput > 0 && (vtcCash + vtcTpv) > vtcTotalInput) ? '' : 'none';
   const totalSemana = uberNeto + vtcTotal;
-  const com30       = totalSemana * 0.30;
+  const com30       = totalSemana * bbRate('driverSplit');
   const totalChofer = com30 + uberProp + vtcProp + inc;
   const totalCash   = uberCash + vtcCash;
 
@@ -9180,7 +9217,7 @@ window.liqGeneratePDF = async function() {
 
     sec('UBER');
     row('Total Uber bruto', fmt(d.uberBruto));
-    row('Impuestos (10%)', `- ${fmt(d.uberTax)}`, {indent:true,neg:true});
+    row('Impuestos ('+fcPctU()+')', `- ${fmt(d.uberTax)}`, {indent:true,neg:true});
     row('Neto Uber', fmt(d.uberNeto), {indent:true,bold:true});
     if((d.inc||0)>0) row('+ Incentivo', fmt(d.inc), {indent:true});
     if((d.uberProp||0)>0) row('+ Propina Uber', fmt(d.uberProp), {indent:true});
@@ -9195,7 +9232,7 @@ window.liqGeneratePDF = async function() {
 
     sec('TOTAL SEMANA');
     row(`Neto Uber + VTC`, fmt(d.totalSemana), {bold:true});
-    row('x 30% comision chofer', fmt(d.com30), {indent:true,accent:true});
+    row('x '+fcPctC()+' comisión chófer', fmt(d.com30), {indent:true,accent:true});
     y+=4;
     box('TRANSFERIR AL CHOFER', fmt(d.totalChofer), gold);
 
@@ -9271,12 +9308,18 @@ window.liqLoadRecord = async function(id) {
     if(el) el.value = val || '';
   };
 
-  setVal('liq-name',       d.choferId || d.choferName);
+  // Las cuentas antiguas guardaban el nombre en vez del uid.
+  const _sel = document.getElementById('liq-name');
+  let _uid = d.choferId || '';
+  if (_sel?.tagName === 'SELECT' && ![..._sel.options].some(o => o.value === _uid)) {
+    _uid = Object.entries(allUsers).find(([, u]) => u && u.name === (d.choferName || d.choferId))?.[0] || '';
+  }
+  if (_sel?.tagName === 'SELECT') _sel.value = _uid;
   setVal('liq-week-start', d.weekStart);
   setVal('liq-week-end',   d.weekEnd);
   setVal('liq-uber',       d.uberBruto);
   setVal('liq-inc',        d.inc);
-  setVal('liq-prop',       d.uberProp);
+  setVal('liq-uber-prop',  d.uberProp);
   setVal('liq-uber-cash',  d.uberCash);
   setVal('liq-vtc-total-input', d.vtcTotal);
   setVal('liq-vtc-cash',   d.vtcCash);
@@ -9565,24 +9608,24 @@ function calcUber() {
   document.getElementById('uc-result').style.display = hasData ? 'block' : 'none';
   if (!hasData) return;
 
-  const uberTax    = Math.round(uber * 0.10 * 100) / 100;
+  const uberTax    = Math.round(uber * bbRate('uberTax') * 100) / 100;
   const uberNeto   = uber - uberTax;
-  const uberChofer = Math.round((uberNeto + incentivo + propina) * 0.30 * 100) / 100;
-  const vtcChofer  = Math.round(vtc * 0.30 * 100) / 100;
+  const uberChofer = Math.round((uberNeto + incentivo + propina) * bbRate('driverSplit') * 100) / 100;
+  const vtcChofer  = Math.round(vtc * bbRate('driverSplit') * 100) / 100;
   const vtcTrans   = vtcChofer - cash;
   const totalTrans = uberChofer + vtcTrans;
 
   const rows = [
     {label:'UBER', value:'', bold:false, accent:true},
     {label:'Total bruto', value:fmtEUR(uber)},
-    {label:'− Impuestos (10%)', value:'− '+fmtEUR(uberTax), neg:true, indent:true},
+    {label:'− Impuestos ('+fcPctU()+')', value:'− '+fmtEUR(uberTax), neg:true, indent:true},
     {label:'Neto Uber', value:fmtEUR(uberNeto), indent:true},
     ...(incentivo>0?[{label:'Incentivo Uber', value:'+ '+fmtEUR(incentivo), indent:true}]:[]),
     ...(propina>0?[{label:'Propina Uber', value:'+ '+fmtEUR(propina), indent:true}]:[]),
-    {label:'Comisión chófer Uber (30%)', value:fmtEUR(uberChofer), accent:true, bold:true},
+    {label:'Comisión chófer Uber ('+fcPctC()+')', value:fmtEUR(uberChofer), accent:true, bold:true},
     {label:'VTC PRIVADO', value:'', accent:true},
     {label:'Total VTC', value:fmtEUR(vtc)},
-    {label:'Comisión chófer VTC (30%)', value:fmtEUR(vtcChofer), accent:true, bold:true},
+    {label:'Comisión chófer VTC ('+fcPctC()+')', value:fmtEUR(vtcChofer), accent:true, bold:true},
     {label:'− Cash cobrado', value:'− '+fmtEUR(cash), neg:true, indent:true},
     {label:'Pendiente transferencia VTC', value:fmtEUR(Math.max(0,vtcTrans)), indent:true},
   ];
@@ -9623,10 +9666,10 @@ async function ucDownloadPDF() {
   const cash      = ucVal('uc-cash');
   const name      = document.getElementById('uc-name')?.value || '';
 
-  const uberTax    = Math.round(uber * 0.10 * 100) / 100;
+  const uberTax    = Math.round(uber * bbRate('uberTax') * 100) / 100;
   const uberNeto   = uber - uberTax;
-  const uberChofer = Math.round((uberNeto + incentivo + propina) * 0.30 * 100) / 100;
-  const vtcChofer  = Math.round(vtc * 0.30 * 100) / 100;
+  const uberChofer = Math.round((uberNeto + incentivo + propina) * bbRate('driverSplit') * 100) / 100;
+  const vtcChofer  = Math.round(vtc * bbRate('driverSplit') * 100) / 100;
   const vtcTrans   = vtcChofer - cash;
   const totalTrans = uberChofer + vtcTrans;
 
@@ -9684,16 +9727,16 @@ async function ucDownloadPDF() {
 
   sec('UBER');
   row('TOTAL UBER BRUTO', fmtEUR(uber));
-  row('- Impuestos (10%)', '- '+fmtEUR(uberTax), {indent:true,neg:true});
+  row('- Impuestos ('+fcPctU()+')', '- '+fmtEUR(uberTax), {indent:true,neg:true});
   row('Neto Uber', fmtEUR(uberNeto), {indent:true});
   if(incentivo>0) row('Incentivo Uber', '+ '+fmtEUR(incentivo), {indent:true});
   if(propina>0) row('Propina Uber', '+ '+fmtEUR(propina), {indent:true});
-  row('COMISION CHOFER UBER (30% neto)', fmtEUR(uberChofer), {accent:true,bold:true});
+  row('COMISIÓN CHÓFER UBER ('+fcPctC()+' neto)', fmtEUR(uberChofer), {accent:true,bold:true});
   y+=2;
 
   sec('VTC PRIVADO');
   row('TOTAL VTC PRIVADOS', fmtEUR(vtc));
-  row('COMISION CHOFER VTC (30%)', fmtEUR(vtcChofer), {accent:true,bold:true});
+  row('COMISIÓN CHÓFER VTC ('+fcPctC()+')', fmtEUR(vtcChofer), {accent:true,bold:true});
   row('- Cash cobrado por chofer', '- '+fmtEUR(cash), {indent:true,neg:true});
   row('Pendiente transferencia VTC', fmtEUR(Math.max(0,vtcTrans)), {indent:true});
   y+=4;
@@ -9762,6 +9805,9 @@ let _bbCalYear=null, _bbCalMonth=null, _bbCalMode='month';
 const BB_RATE_DEFAULTS = {driverSplit:0.30, uberTax:0.10, iva:0.10, waitFreeMin:15, waitPerMin:2, serviceKm:15000, docWarnDays:30, fuelPrice:1.65};
 function bbRates(){ return Object.assign({}, BB_RATE_DEFAULTS, (appSettings&&appSettings.rates)||{}); }
 function bbRate(k){ return bbRates()[k]; }
+// Porcentajes de Ajustes › Tarifas, para los textos («30 %»).
+function fcPctC(){ return Math.round(bbRate('driverSplit')*100)+'%'; }
+function fcPctU(){ return Math.round(bbRate('uberTax')*100)+'%'; }
 window.bbSaveRates = async function(){
   const g=id=>{ const v=parseFloat(document.getElementById(id)?.value); return isNaN(v)?null:v; };
   const rates={
