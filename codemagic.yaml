@@ -1,0 +1,132 @@
+# ═══════════════════════════════════════════════════════════════════
+#  Fleet Control · compilación en Codemagic (iPhone y Android)
+#
+#  Dos flujos independientes. Los dos hacen lo mismo al principio: instalan
+#  las dependencias, copian la app web dentro del proyecto nativo con
+#  "npx cap sync" y compilan. No hay paso de "npm run build": la app es un
+#  único archivo HTML que ya está en www/.
+#
+#  Lo que hay que tener en Codemagic ANTES de pulsar "Start new build":
+#    Android · Code signing identities → Android keystores → sube o genera
+#              un almacén de claves con el nombre de referencia
+#              "fleet_control_keystore" (abajo, en android_signing).
+#    iPhone  · Teams → Integrations → App Store Connect → añade la clave API
+#              de App Store Connect con el nombre "wolftech" (abajo, en
+#              integrations). Con eso Codemagic crea solos los certificados
+#              y perfiles (ios_signing). Hace falta cuenta de desarrollador
+#              de Apple y la app creada en App Store Connect con el mismo
+#              bundle id: com.wolftechsoluciones.fleetcontrol.
+#
+#  Cada build sube el número de versión solo: usa BUILD_NUMBER de Codemagic.
+# ═══════════════════════════════════════════════════════════════════
+workflows:
+
+  android:
+    name: Fleet Control · Android
+    max_build_duration: 60
+    instance_type: linux_x2
+    environment:
+      android_signing:
+        - fleet_control_keystore
+      vars:
+        PACKAGE_NAME: "com.wolftechsoluciones.fleetcontrol"
+      node: 22
+      java: 21
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $CM_BUILD_DIR/node_modules
+    scripts:
+      - name: Ruta del SDK de Android
+        script: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/android/local.properties"
+      - name: Dependencias
+        script: |
+          npm ci
+      - name: Copiar la app web al proyecto nativo
+        script: |
+          npx cap sync android
+      - name: Compilar (AAB para Google Play y APK para instalar a mano)
+        script: |
+          cd "$CM_BUILD_DIR/android"
+          ./gradlew bundleRelease assembleRelease \
+            -PversionCode=$BUILD_NUMBER \
+            -PversionName=2.0.$BUILD_NUMBER
+    artifacts:
+      - android/app/build/outputs/bundle/release/*.aab
+      - android/app/build/outputs/apk/release/*.apk
+    publishing:
+      email:
+        recipients:
+          - info@wolftechsoluciones.com
+        notify:
+          success: true
+          failure: true
+      # Cuando tengas la cuenta de servicio de Google Play (JSON) guardada en
+      # Codemagic como variable GCLOUD_SERVICE_ACCOUNT_CREDENTIALS dentro del
+      # grupo "google_play", descomenta esto y añade "groups: [google_play]"
+      # en environment. Sube cada build a la pista interna como borrador.
+      # google_play:
+      #   credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+      #   track: internal
+      #   submit_as_draft: true
+
+  ios:
+    name: Fleet Control · iPhone
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: wolftech
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.wolftechsoluciones.fleetcontrol
+      vars:
+        XCODE_WORKSPACE: "App.xcworkspace"
+        XCODE_SCHEME: "App"
+      node: 22
+      xcode: latest
+      cocoapods: default
+    cache:
+      cache_paths:
+        - $CM_BUILD_DIR/node_modules
+    scripts:
+      - name: Dependencias
+        script: |
+          npm ci
+      - name: Copiar la app web al proyecto nativo
+        script: |
+          npx cap sync ios
+      - name: CocoaPods
+        script: |
+          cd "$CM_BUILD_DIR/ios/App" && pod install
+      - name: Firma
+        script: |
+          xcode-project use-profiles
+      - name: Número de build
+        script: |
+          cd "$CM_BUILD_DIR/ios/App"
+          agvtool new-version -all $BUILD_NUMBER
+      - name: Compilar el IPA
+        script: |
+          cd "$CM_BUILD_DIR/ios/App"
+          xcode-project build-ipa --workspace "$XCODE_WORKSPACE" --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - ios/App/build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+    publishing:
+      email:
+        recipients:
+          - info@wolftechsoluciones.com
+        notify:
+          success: true
+          failure: true
+      # Sube cada build a TestFlight: así lo instalas en tu iPhone desde la
+      # app TestFlight sin pasar por la revisión de Apple. La revisión de la
+      # App Store se pide a mano desde App Store Connect cuando tú quieras.
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false

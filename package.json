@@ -1,0 +1,25 @@
+{
+  "name": "fleet-control-movil",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Fleet Control · app de iPhone y Android (Capacitor). La app web vive en www/index.html.",
+  "scripts": {
+    "sync": "cap sync",
+    "android": "cap sync android && cd android && ./gradlew assembleDebug",
+    "assets": "capacitor-assets generate --iconBackgroundColor '#0a1018' --iconBackgroundColorDark '#0a1018' --splashBackgroundColor '#0a1018' --splashBackgroundColorDark '#0a1018' --ios --android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/cli": "^7.6.9",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/filesystem": "^7.1.9",
+    "@capacitor/ios": "^7.6.9",
+    "@capacitor/share": "^7.0.4",
+    "@capacitor/splash-screen": "^7.0.5",
+    "@capacitor/status-bar": "^7.0.6"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5"
+  }
+}
