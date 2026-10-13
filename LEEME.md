@@ -55,7 +55,7 @@ Codemagic los regenera en cada compilación.
      una clave API con rol *App Manager*. Descarga el `.p8` (solo se puede
      una vez) y apunta Issuer ID y Key ID.
    - Codemagic → Teams → Integrations → App Store Connect → añadir con esas
-     tres cosas. Nombre exacto: `wolftech` (está en `codemagic.yaml`).
+     tres cosas. Nombre exacto: `WolfTech` (está en `codemagic.yaml`).
    - App Store Connect → Apps → nueva app, bundle id
      `com.wolftechsoluciones.fleetcontrol`, nombre "Fleet Control".
    Con la integración puesta, Codemagic crea solo certificados y perfiles.

@@ -11,7 +11,7 @@
 #              un almacén de claves con el nombre de referencia
 #              "fleet_control_keystore" (abajo, en android_signing).
 #    iPhone  · Teams → Integrations → App Store Connect → añade la clave API
-#              de App Store Connect con el nombre "wolftech" (abajo, en
+#              de App Store Connect con el nombre "WolfTech" (abajo, en
 #              integrations). Con eso Codemagic crea solos los certificados
 #              y perfiles (ios_signing). Hace falta cuenta de desarrollador
 #              de Apple y la app creada en App Store Connect con el mismo
@@ -78,7 +78,7 @@ workflows:
     max_build_duration: 90
     instance_type: mac_mini_m2
     integrations:
-      app_store_connect: wolftech
+      app_store_connect: WolfTech
     environment:
       ios_signing:
         distribution_type: app_store
